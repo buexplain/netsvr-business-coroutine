@@ -4,27 +4,27 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "584c9e830eb5ea7b747f56fbba7ab813",
+    "content-hash": "145ff552719f3e3505a78521ccdaf286",
     "packages": [
         {
             "name": "buexplain/netsvr-protocol-php",
-            "version": "v2.0.0",
+            "version": "v2.0.1",
             "source": {
                 "type": "git",
                 "url": "https://github.com/buexplain/netsvr-protocol-php.git",
-                "reference": "f92f44483c2a08b4023291f5367cdf231acc161c"
+                "reference": "ba2492e45efe872963c52238378bac274297a67d"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/buexplain/netsvr-protocol-php/zipball/f92f44483c2a08b4023291f5367cdf231acc161c",
-                "reference": "f92f44483c2a08b4023291f5367cdf231acc161c",
+                "url": "https://api.github.com/repos/buexplain/netsvr-protocol-php/zipball/ba2492e45efe872963c52238378bac274297a67d",
+                "reference": "ba2492e45efe872963c52238378bac274297a67d",
                 "shasum": ""
             },
             "require": {
                 "php": ">=8.0"
             },
             "require-dev": {
-                "buexplain/netsvr-protocol": "^2.0.1"
+                "buexplain/netsvr-protocol": "^2.0.2"
             },
             "type": "library",
             "autoload": {
@@ -45,9 +45,9 @@
             "description": "https://github.com/buexplain/netsvr-protocol生成的php版本",
             "support": {
                 "issues": "https://github.com/buexplain/netsvr-protocol-php/issues",
-                "source": "https://github.com/buexplain/netsvr-protocol-php/tree/v2.0.0"
+                "source": "https://github.com/buexplain/netsvr-protocol-php/tree/v2.0.1"
             },
-            "time": "2023-11-12T07:24:21+00:00"
+            "time": "2023-12-06T13:38:05+00:00"
         },
         {
             "name": "psr/container",
