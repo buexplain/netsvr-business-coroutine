@@ -1,0 +1,5 @@
+.*
+!.gitignore
+!.gitattributes
+vendor
+.php_cs.cache
