@@ -38,3 +38,21 @@ ps：如果你的项目是非协程的，串行执行php代码的，则可以使
 必须添加配置`\NetsvrBusiness\Handler\StopHandler::class=>1`.
 反之,不必做任何配置,本包的`\NetsvrBusiness\Listener\CloseListener::class`会自行处理.
 
+## 如何跑本包的测试用例
+
+1. 下载[网关服务](https://github.com/buexplain/netsvr/releases)的`v3.0.0`版本及以上的程序包
+2. 修改配置文件`netsvr.toml`
+    - `ConnOpenCustomUniqIdKey`改为`ConnOpenCustomUniqIdKey = "uniqId"`
+    - `ServerId`改为`ServerId=0`
+    - `ConnOpenWorkerId`改为`ConnOpenWorkerId=0`
+    - `ConnCloseWorkerId`改为`ConnCloseWorkerId=0`
+3. 执行命令：`netsvr-windows-amd64.bin -config configs/netsvr.toml`启动网关服务，注意我这个命令是windows系统的，其它系统的，自己替换成对应的网关服务程序包即可
+4. 完成以上步骤后，就启动好一个网关服务了，接下来再启动一个网关服务，目的是测试本包在网关服务多机部署下的正确性
+5. 复制一份`netsvr.toml`为`netsvr-607.toml`，并改动里面的`606`系列端口的为`607`系列端口，避免端口冲突；`ServerId`
+   项改为`ServerId=1`，避免网关唯一id冲突
+6. 执行命令：`netsvr-windows-amd64.bin -config configs/netsvr-607.toml`
+   启动第二个网关服务，注意我这个命令是windows系统的，其它系统的，自己替换成对应的网关服务程序包即可
+7. 完成以上步骤后，两个网关服务启动完毕，算是准备好了网关这块的环境
+8. 安装[swow](https://github.com/swow/swow)扩展，测试代码是基于swow扩展编写的，之所以不采用swoole进行测试，是因为swow比较方便，不需要协程容器即可运行
+9. 执行本包的测试命令：`composer test`
+   ，或者执行命令：`php -d extension=swow .\vendor\bin\phpunit --configuration phpunit.xml`，等待一段时间，即可看到测试结果

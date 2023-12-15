@@ -63,9 +63,10 @@ use NetsvrBusiness\Contract\ServerIdConvertInterface;
 use NetsvrBusiness\Contract\TaskSocketInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolMangerInterface;
 use NetsvrBusiness\Exception\SocketReceiveException;
+use NetsvrBusiness\Swo\Channel;
+use NetsvrBusiness\Swo\Coroutine;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
-use Swoole\Coroutine;
 use Throwable;
 
 /**
@@ -448,7 +449,7 @@ class NetBus
             return [];
         }
         //再并发的向每个网关请求
-        $retCh = new Coroutine\Channel(count($serverGroup));
+        $retCh = new Channel(count($serverGroup));
         foreach ($serverGroup as $serverId => $currentUniqIds) {
             Coroutine::create(function () use ($serverId, $currentUniqIds, $retCh) {
                 try {
@@ -543,7 +544,7 @@ class NetBus
             }
         }
         //多机器部署的网关，并发请求
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {
@@ -623,7 +624,7 @@ class NetBus
             }
         }
         //网关是多机器部署的，并发请求
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {
@@ -703,7 +704,7 @@ class NetBus
             }
         }
         //并发请求多个网关
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {
@@ -783,7 +784,7 @@ class NetBus
             }
         }
         //并发请求多个网关
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {
@@ -872,7 +873,7 @@ class NetBus
             }
         }
         //网关是多机器部署的，并发请求每个网关机器
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {
@@ -966,7 +967,7 @@ class NetBus
                 $socket->release();
             }
         }
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {
@@ -1060,7 +1061,7 @@ class NetBus
         if (empty($serverGroup)) {
             return [];
         }
-        $retCh = new Coroutine\Channel(count($serverGroup));
+        $retCh = new Channel(count($serverGroup));
         foreach ($serverGroup as $serverId => $currentUniqIds) {
             Coroutine::create(function () use ($serverId, $currentUniqIds, $retCh) {
                 try {
@@ -1128,7 +1129,7 @@ class NetBus
             return [];
         }
         $req = self::pack(Cmd::Metrics, '');
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {
@@ -1223,7 +1224,7 @@ class NetBus
             $limitReq = new LimitReq();
         }
         $req = self::pack(Cmd::Limit, $limitReq->serializeToString());
-        $retCh = new Coroutine\Channel(count($sockets));
+        $retCh = new Channel(count($sockets));
         foreach ($sockets as $socket) {
             Coroutine::create(function () use ($socket, $req, $retCh) {
                 try {

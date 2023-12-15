@@ -23,10 +23,10 @@ use Netsvr\Constant;
 use NetsvrBusiness\Contract\TaskSocketFactoryInterface;
 use NetsvrBusiness\Contract\TaskSocketInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolInterface;
+use NetsvrBusiness\Swo\Channel;
+use NetsvrBusiness\Swo\Coroutine;
 use Psr\Log\LoggerInterface;
 use RuntimeException;
-use Swoole\Coroutine;
-use Swoole\Coroutine\Channel;
 use Throwable;
 
 /**
@@ -61,12 +61,12 @@ class TaskSocketPool implements TaskSocketPoolInterface
     /**
      * @var int 获取连接超时
      */
-    protected int $waitTimeout;
+    protected int $waitTimeoutMillisecond;
 
     /**
-     * @var int 与网关维持心跳的间隔秒数
+     * @var int 与网关维持心跳的间隔毫秒数
      */
-    protected int $heartbeatInterval;
+    protected int $heartbeatIntervalMillisecond;
 
     /**
      * 心跳定时器
@@ -80,8 +80,8 @@ class TaskSocketPool implements TaskSocketPoolInterface
      * @param int $size
      * @param TaskSocketFactoryInterface $factory
      * @param int $serverId
-     * @param int $waitTimeout
-     * @param int $heartbeatInterval
+     * @param int $waitTimeoutMillisecond
+     * @param int $heartbeatIntervalMillisecond
      */
     public function __construct(
         string                     $logPrefix,
@@ -89,8 +89,8 @@ class TaskSocketPool implements TaskSocketPoolInterface
         int                        $size,
         TaskSocketFactoryInterface $factory,
         int                        $serverId,
-        int                        $waitTimeout,
-        int                        $heartbeatInterval,
+        int                        $waitTimeoutMillisecond,
+        int                        $heartbeatIntervalMillisecond,
     )
     {
         $this->logPrefix = strlen($logPrefix) > 0 ? trim($logPrefix) . ' ' : '';
@@ -98,8 +98,8 @@ class TaskSocketPool implements TaskSocketPoolInterface
         $this->factory = $factory;
         $this->pool = new Channel($size);
         $this->serverId = $serverId;
-        $this->waitTimeout = $waitTimeout;
-        $this->heartbeatInterval = $heartbeatInterval;
+        $this->waitTimeoutMillisecond = $waitTimeoutMillisecond;
+        $this->heartbeatIntervalMillisecond = $heartbeatIntervalMillisecond;
         $this->heartbeatTick = new Channel();
         $this->loopHeartbeat();
     }
@@ -120,10 +120,10 @@ class TaskSocketPool implements TaskSocketPoolInterface
     {
         Coroutine::create(function () {
             try {
-                while (!$this->heartbeatTick->pop((float)$this->heartbeatInterval) && $this->heartbeatTick->errCode !== SWOOLE_CHANNEL_CLOSED) {
+                while (!$this->heartbeatTick->pop($this->heartbeatIntervalMillisecond) && !$this->heartbeatTick->isClosed()) {
                     $ret = [];
-                    for ($i = 0; $i < $this->pool->capacity; $i++) {
-                        $socket = $this->pool->pop(0.02);
+                    for ($i = 0; $i < $this->pool->getCapacity(); $i++) {
+                        $socket = $this->pool->pop(20);
                         if (!$socket instanceof TaskSocketInterface) {
                             continue;
                         }
@@ -141,7 +141,7 @@ class TaskSocketPool implements TaskSocketPoolInterface
                     }
                 }
             } finally {
-                $socket = $this->pool->pop(0.02);
+                $socket = $this->pool->pop(20);
                 if ($socket instanceof TaskSocketInterface) {
                     $host = $socket->getHost();
                     $port = $socket->getPort();
@@ -165,7 +165,7 @@ class TaskSocketPool implements TaskSocketPoolInterface
         $retry = true;
         loop:
         //代码的cpu执行权力从这里开始
-        if ($this->pool->length() === 0 && $this->num < $this->pool->capacity) {
+        if ($this->pool->getLength() === 0 && $this->num < $this->pool->getCapacity()) {
             try {
                 //到下面一行为止，不能发生cpu执行权力让渡，否则会导致连接创建溢出
                 ++$this->num;
@@ -175,10 +175,10 @@ class TaskSocketPool implements TaskSocketPoolInterface
                 throw $throwable;
             }
         }
-        $connection = $this->pool->pop((float)$this->waitTimeout);
+        $connection = $this->pool->pop($this->waitTimeoutMillisecond);
         if (!$connection instanceof TaskSocketInterface) {
             //从连接池内获取连接失败，再次检查是否可以构建新连接，如果可以，则再次尝试构建一个新的连接
-            if ($retry === true && $this->pool->length() === 0 && $this->num < $this->pool->capacity) {
+            if ($retry === true && $this->pool->getLength() === 0 && $this->num < $this->pool->getCapacity()) {
                 $retry = false;
                 goto loop;
             }
@@ -208,7 +208,7 @@ class TaskSocketPool implements TaskSocketPoolInterface
     public function close(): void
     {
         //如果是swoole的onWorkerExit触发了本方法，则可能会被持续触发，所以个加个判断，如果触发过，则不必再次触发
-        if ($this->heartbeatTick->errCode == SWOOLE_CHANNEL_CLOSED) {
+        if ($this->heartbeatTick->isClosed()) {
             return;
         }
         //先关闭心跳定时器

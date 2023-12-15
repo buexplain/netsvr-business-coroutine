@@ -25,7 +25,6 @@ use NetsvrBusiness\Exception\SocketReceiveException;
 use NetsvrBusiness\Exception\SocketSendException;
 use Psr\Log\LoggerInterface;
 use Throwable;
-use Swoole\Coroutine\Socket as BaseSocket;
 
 /**
  *
@@ -53,21 +52,21 @@ class Socket implements SocketInterface
      */
     protected int $port;
     /***
-     * 发送数据超时，单位秒
-     * @var float
+     * 读写数据超时，单位秒
+     * @var int
      */
-    protected float $sendTimeout;
+    protected int $sendReceiveTimeout;
     /**
-     * 接收数据超时，单位秒
-     * @var float
+     * 连接到服务端超时，单位秒
+     * @var int
      */
-    protected float $receiveTimeout;
+    protected int $connectTimeout;
 
     /**
      * socket对象
-     * @var BaseSocket|null
+     * @var resource|null
      */
-    protected ?BaseSocket $socket = null;
+    protected mixed $socket = null;
 
     /**
      * @var bool 连接状态
@@ -79,24 +78,24 @@ class Socket implements SocketInterface
      * @param LoggerInterface $logger
      * @param string $host netsvr网关的worker服务器监听的主机
      * @param int $port netsvr网关的worker服务器监听的端口
-     * @param float $sendTimeout 发送数据超时，单位秒
-     * @param float $receiveTimeout 接收数据超时，单位秒
+     * @param int $sendReceiveTimeout 读写数据超时，单位秒
+     * @param int $connectTimeout 连接到服务端超时，单位秒
      */
     public function __construct(
         string          $logPrefix,
         LoggerInterface $logger,
         string          $host,
         int             $port,
-        float           $sendTimeout,
-        float           $receiveTimeout,
+        int             $sendReceiveTimeout,
+        int             $connectTimeout,
     )
     {
         $this->logPrefix = strlen($logPrefix) > 0 ? trim($logPrefix) . ' ' : '';
         $this->logger = $logger;
         $this->host = $host;
         $this->port = $port;
-        $this->sendTimeout = $sendTimeout;
-        $this->receiveTimeout = $receiveTimeout;
+        $this->sendReceiveTimeout = $sendReceiveTimeout;
+        $this->connectTimeout = $connectTimeout;
     }
 
     /**
@@ -104,9 +103,9 @@ class Socket implements SocketInterface
      */
     public function __destruct()
     {
-        if ($this->socket instanceof BaseSocket) {
+        if (is_resource($this->socket)) {
             try {
-                $this->socket->close();
+                fclose($this->socket);
             } catch (Throwable) {
             }
             $this->socket = null;
@@ -144,15 +143,13 @@ class Socket implements SocketInterface
      */
     public function close(): void
     {
-        if ($this->connected && $this->socket instanceof BaseSocket) {
+        if ($this->connected) {
             $this->connected = false;
-            if (!$this->socket->isClosed()) {
-                $this->socket->close();
-                $this->logger->info(sprintf($this->logPrefix . 'close connection %s:%s ok.',
-                    $this->host,
-                    $this->port,
-                ));
-            }
+            $this->__destruct();
+            $this->logger->info(sprintf($this->logPrefix . 'close connection %s:%s ok.',
+                $this->host,
+                $this->port,
+            ));
         }
     }
 
@@ -163,22 +160,15 @@ class Socket implements SocketInterface
     public function connect(): bool
     {
         try {
-            $socket = new BaseSocket(2, 1, 0);
-            $socket->setProtocol([
-                'open_length_check' => true,
-                //大端序，详情请看：https://github.com/buexplain/netsvr/blob/main/internal/worker/manager/connProcessor.go#L127
-                'package_length_type' => 'N',
-                'package_length_offset' => 0,
-                /**
-                 * 因为网关的包头包体协议的包头描述的长度是不含包头的，所以偏移4个字节
-                 * @see https://github.com/buexplain/netsvr/blob/main/README.md#业务进程与网关之间的tcp数据包边界处理
-                 */
-                'package_body_offset' => 4,
-                'package_max_length' => 1024 * 1024 * 2,
-            ]);
-            $socket->connect($this->host, $this->port, 3);
-            if ($socket->errCode !== 0) {
-                throw new SocketConnectException($socket->errMsg, $socket->errCode);
+            $socket = @stream_socket_client(sprintf('tcp://%s:%d', $this->host, $this->port), $errno, $errMsg, $this->connectTimeout);
+            if ($socket === false) {
+                throw new SocketConnectException($errMsg, $errno);
+            }
+            if (!stream_set_timeout($socket, $this->sendReceiveTimeout)) {
+                throw new SocketConnectException('stream set timeout error', 0);
+            }
+            if (!stream_set_blocking($socket, true)) {
+                throw new SocketConnectException('stream set blocking error', 0);
             }
             //先关闭旧的socket对象
             $this->close();
@@ -210,14 +200,28 @@ class Socket implements SocketInterface
     {
         try {
             $data = pack('N', strlen($data)) . $data;
-            $ret = $this->socket->sendAll($data, $this->sendTimeout);
-            if ($ret === false) {
-                throw new SocketSendException($this->socket->errMsg, $this->socket->errCode);
+            $length = strlen($data);
+            while (true) {
+                $ret = fwrite($this->socket, $data, $length);
+                //发送失败，退出循环
+                if ($ret === false) {
+                    $error = error_get_last();
+                    if ($error) {
+                        $message = $error['message'];
+                        error_clear_last();
+                    } else {
+                        $message = 'netsvr server closed the connection';
+                    }
+                    throw new SocketSendException($message);
+                }
+                //发送成功，检查是否发送完毕
+                if ($ret === $length) {
+                    return true;
+                }
+                //没有发送完毕，遇到tcp短写，继续发送
+                $data = substr($data, $ret);
+                $length -= $ret;
             }
-            if ($ret != strlen($data)) {
-                throw new SocketSendException('short write', 0);
-            }
-            return true;
         } catch (Throwable $throwable) {
             $this->connected = false;
             $this->logger->error(sprintf($this->logPrefix . 'send to %s:%s failed.%s%s',
@@ -231,28 +235,64 @@ class Socket implements SocketInterface
     }
 
     /**
-     * 接收数据
+     * 从socket中读取一定长度的数据
+     * @param int $length
+     * @return string
+     */
+    protected function _receive(int $length): string
+    {
+        $buffer = fread($this->socket, $length);
+        if ($buffer === false || $buffer === '') {
+            $info = stream_get_meta_data($this->socket);
+            if ($info['timed_out']) {
+                //读取数据超时
+                return '';
+            }
+            $error = error_get_last();
+            if ($error) {
+                $message = $error['message'];
+                error_clear_last();
+            } else {
+                $message = 'netsvr server closed the connection';
+            }
+            throw new SocketReceiveException($message);
+        }
+        return $buffer;
+    }
+
+    /**
+     * 读取成功返回一个包，失败返回false，超时返回空字符串
      * @return string|false
      */
     public function receive(): string|false
     {
         try {
-            $ret = $this->socket->recvPacket($this->receiveTimeout);
-            if ($ret === false) {
-                if ($this->socket->errCode === 110 || ($this->socket->errCode === 116 && stripos(PHP_OS, 'win') !== false)) {
-                    //SOCKET_ETIMEDOUT 110 Operation timed out
-                    //116 Connection timed out
-                    //超时，返回空字符串
-                    return '';
+            //先读取包头长度，4个字节
+            $buffer = $this->_receive(4);
+            if ($buffer === '') {
+                //读取超时，返回空字符串
+                return '';
+            }
+            //解析出包体长度
+            $prefix = unpack('N', $buffer);
+            if (!is_array($prefix) || !isset($prefix[1]) || !is_int($prefix[1])) {
+                throw new SocketReceiveException('unpack netsvr package length failed.', 0);
+            }
+            $packageLength = $prefix[1];
+            //再读取包体数据
+            $packageBody = '';
+            $readBytes = $packageLength;
+            while ($readBytes > 0) {
+                $buffer = $this->_receive(min($readBytes, 65536));
+                if ($buffer === '') {
+                    //读取超时，因为包头读取成功了，此时tcp流中的包体读取超时，则算读取失败，否则无法解析出一个完整的业务包
+                    $this->connected = false;
+                    return false;
                 }
-                throw new SocketReceiveException($this->socket->errMsg, $this->socket->errCode);
+                $packageBody .= $buffer;
+                $readBytes -= strlen($buffer);
             }
-            //对端关闭了连接
-            if ($ret === '' && !$this->socket->checkLiveness()) {
-                throw new SocketReceiveException('connection closed by peer', 0);
-            }
-            //截取掉包头部分
-            return substr($ret, 4);
+            return $packageBody;
         } catch (Throwable $throwable) {
             $this->connected = false;
             $this->logger->error(sprintf($this->logPrefix . 'receive from %s:%s failed.%s%s',

@@ -36,16 +36,16 @@ class TaskSocketFactory implements TaskSocketFactoryInterface
      * @param LoggerInterface $logger
      * @param string $host
      * @param int $port
-     * @param int $sendTimeout
-     * @param int $receiveTimeout
+     * @param int $sendReceiveTimeout
+     * @param int $connectTimeout
      */
     public function __construct(
         protected string          $logPrefix,
         protected LoggerInterface $logger,
         protected string          $host,
         protected int             $port,
-        protected int             $sendTimeout,
-        protected int             $receiveTimeout,
+        protected int             $sendReceiveTimeout,
+        protected int             $connectTimeout,
     )
     {
     }
@@ -62,8 +62,8 @@ class TaskSocketFactory implements TaskSocketFactoryInterface
             'logger' => $this->logger,
             'host' => $this->host,
             'port' => $this->port,
-            'sendTimeout' => $this->sendTimeout,
-            'receiveTimeout' => $this->receiveTimeout,
+            'sendReceiveTimeout' => $this->sendReceiveTimeout,
+            'connectTimeout' => $this->connectTimeout,
             'pool' => $pool,
         ]);
         if (!$socket->connect()) {

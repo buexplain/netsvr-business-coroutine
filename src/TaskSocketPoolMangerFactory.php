@@ -70,11 +70,11 @@ class TaskSocketPoolMangerFactory
             $pool = make(TaskSocketPoolInterface::class, [
                 'logPrefix' => $item['logPrefix'],
                 'logger' => $item['logger'],
-                'heartbeatInterval' => $item['heartbeatInterval'],
+                'heartbeatIntervalMillisecond' => $item['heartbeatIntervalMillisecond'],
                 'size' => $item['taskSocketPoolMaxConnections'],
                 'factory' => $factory,
                 'serverId' => $item['serverId'],
-                'waitTimeout' => $item['taskSocketPoolWaitTimeout'],
+                'waitTimeoutMillisecond' => $item['taskSocketPoolWaitTimeoutMillisecond'],
             ]);
             $manger->set($pool);
         }

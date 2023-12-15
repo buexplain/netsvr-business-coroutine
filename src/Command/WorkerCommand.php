@@ -25,7 +25,7 @@ use Swoole\Process;
 use Symfony\Component\Console\Command\Command;
 
 /**
- *
+ * 只在swoole下使用
  */
 class WorkerCommand extends Command
 {

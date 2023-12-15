@@ -28,16 +28,19 @@ use Netsvr\RegisterResp;
 use Netsvr\Transfer;
 use Netsvr\UnRegisterReq;
 use Netsvr\UnRegisterResp;
+use NetsvrBusiness\Contract\ChannelInterface;
 use NetsvrBusiness\Contract\EventInterface;
 use NetsvrBusiness\Contract\MainSocketInterface;
 use NetsvrBusiness\Contract\SocketInterface;
 use NetsvrBusiness\Contract\TaskSocketInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolMangerInterface;
 use NetsvrBusiness\Exception\RegisterMainSocketException;
-use Swoole\Coroutine;
-use Swoole\Coroutine\Channel;
-use Throwable;
+use NetsvrBusiness\Swo\Channel;
+use NetsvrBusiness\Swo\Coroutine;
+use NetsvrBusiness\Swo\WaitGroup;
 use Psr\Log\LoggerInterface;
+use Throwable;
+use function NetsvrBusiness\Swo\milliSleep;
 
 /**
  * 主socket，用于：
@@ -79,30 +82,30 @@ class MainSocket implements MainSocketInterface
      */
     protected string $registerId = '';
     /**
-     * @var Channel 向网关发送数据时，对socket对象提供保护的通道，避免多协程写一个socket对象
+     * @var ChannelInterface 向网关发送数据时，对socket对象提供保护的通道，避免多协程写一个socket对象
      */
-    protected Channel $sendCh;
+    protected ChannelInterface $sendCh;
     /**
-     * @var Channel 如果与网关断开，则需要重连，重连时的互斥锁
+     * @var ChannelInterface 如果与网关断开，则需要重连，重连时的互斥锁
      */
-    protected Channel $reconnectMux;
+    protected ChannelInterface $reconnectMux;
     /**
      * 心跳定时器
-     * @var Channel
+     * @var ChannelInterface
      */
-    protected Channel $heartbeatTick;
+    protected ChannelInterface $heartbeatTick;
     /**
-     * @var int 与网关维持心跳的间隔秒数
+     * @var int 与网关维持心跳的间隔毫秒数
      */
-    protected int $heartbeatInterval;
+    protected int $heartbeatIntervalMillisecond;
     /**
      * @var bool 判断是否已经关闭自己
      */
     protected bool $closed = false;
     /**
-     * @var Coroutine\WaitGroup 等待所有数据发送完毕
+     * @var WaitGroup 等待所有数据发送完毕
      */
-    protected Coroutine\WaitGroup $wait;
+    protected WaitGroup $wait;
 
     protected TaskSocketPoolMangerInterface $taskSocketPoolManger;
 
@@ -114,7 +117,7 @@ class MainSocket implements MainSocketInterface
      * @param int $serverId
      * @param int $workerId
      * @param int $processCmdGoroutineNum
-     * @param int $heartbeatInterval
+     * @param int $heartbeatIntervalMillisecond
      * @param TaskSocketPoolMangerInterface $taskSocketPoolManger
      */
     public function __construct(
@@ -125,7 +128,7 @@ class MainSocket implements MainSocketInterface
         int                           $serverId,
         int                           $workerId,
         int                           $processCmdGoroutineNum,
-        int                           $heartbeatInterval,
+        int                           $heartbeatIntervalMillisecond,
         TaskSocketPoolMangerInterface $taskSocketPoolManger,
     )
     {
@@ -136,12 +139,12 @@ class MainSocket implements MainSocketInterface
         $this->serverId = $serverId;
         $this->workerId = $workerId;
         $this->processCmdGoroutineNum = $processCmdGoroutineNum;
-        $this->heartbeatInterval = $heartbeatInterval;
+        $this->heartbeatIntervalMillisecond = $heartbeatIntervalMillisecond;
         $this->sendCh = new Channel(100);
         $this->reconnectMux = new Channel(1);
         $this->reconnectMux->push(time());//写入一个时间，接下来需要用它计算重连间隔
         $this->heartbeatTick = new Channel();
-        $this->wait = new Coroutine\WaitGroup();
+        $this->wait = new WaitGroup();
         $this->taskSocketPoolManger = $taskSocketPoolManger;
     }
 
@@ -162,11 +165,11 @@ class MainSocket implements MainSocketInterface
     {
         Coroutine::create(function () {
             try {
-                while (!$this->heartbeatTick->pop((float)$this->heartbeatInterval) && $this->heartbeatTick->errCode !== SWOOLE_CHANNEL_CLOSED) {
+                while (!$this->heartbeatTick->pop($this->heartbeatIntervalMillisecond) && !$this->heartbeatTick->isClosed()) {
                     //必须先给计数器加一，否则因为push成功，协程切换到sendCh的消费者身上，导致消费者协程done失败，报错误：WaitGroup misuse: negative counter
                     $this->wait->add();
                     //再尝试发送心跳
-                    if (!$this->sendCh->push(Constant::PING_MESSAGE, 0.02)) {
+                    if (!$this->sendCh->push(Constant::PING_MESSAGE, 20)) {
                         //待发送管道繁忙，则会导致发送心跳失败，计数器减一
                         $this->wait->done();
                     }
@@ -408,7 +411,7 @@ class MainSocket implements MainSocketInterface
                 }
                 //距离上一次重连间隔小于三秒，则休眠三秒后再重连，避免疯狂重连消耗系统资源
                 if (time() - $t < 3) {
-                    Coroutine::sleep(3);
+                    milliSleep(3000);
                 }
                 if ($this->socket->connect() && !$this->closed) {
                     //如果执行过关闭动作，则不必再注册，只需重连即可，重连的目的是保证未发送出去的数据，有机会发送出去

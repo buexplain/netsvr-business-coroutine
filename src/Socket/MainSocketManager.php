@@ -22,8 +22,8 @@ namespace NetsvrBusiness\Socket;
 use NetsvrBusiness\Contract\MainSocketInterface;
 use NetsvrBusiness\Contract\MainSocketManagerInterface;
 use NetsvrBusiness\Exception\DuplicateServerIdException;
-use Swoole\Coroutine;
-use Swoole\Coroutine\WaitGroup;
+use NetsvrBusiness\Swo\Coroutine;
+use NetsvrBusiness\Swo\WaitGroup;
 use Throwable;
 
 /**

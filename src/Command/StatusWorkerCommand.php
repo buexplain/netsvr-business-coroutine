@@ -23,7 +23,7 @@ use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
 /**
- *
+ * 只在swoole下使用
  */
 class StatusWorkerCommand extends WorkerCommand
 {
