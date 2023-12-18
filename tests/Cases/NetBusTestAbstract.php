@@ -25,7 +25,6 @@ use Netsvr\ConnInfoDelete;
 use Netsvr\ConnInfoUpdate;
 use Netsvr\Constant;
 use NetsvrBusiness\Common;
-use NetsvrBusiness\Contract\MainSocketManagerInterface;
 use NetsvrBusiness\NetBus;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerExceptionInterface;
@@ -40,6 +39,7 @@ use Hyperf\Contract\StdoutLoggerInterface;
 use NetsvrBusiness\ConfigProvider;
 use Psr\Container\ContainerInterface;
 use Illuminate\Container\Container;
+use function NetsvrBusiness\Swo\milliSleep;
 
 abstract class NetBusTestAbstract extends TestCase
 {
@@ -61,7 +61,7 @@ abstract class NetBusTestAbstract extends TestCase
     /**
      * 每个网关的连接数量
      */
-    const NETSVR_ONLINE_NUM = 3;
+    protected const NETSVR_ONLINE_NUM = 3;
 
     /**
      * @return void
@@ -70,7 +70,7 @@ abstract class NetBusTestAbstract extends TestCase
      */
     public static function setUpBeforeClass(): void
     {
-        static::initNetBus();
+        static::initContainer();
     }
 
     /**
@@ -78,7 +78,7 @@ abstract class NetBusTestAbstract extends TestCase
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    protected static function initNetBus(): void
+    protected static function initContainer(): void
     {
         /**
          * @var $container ContainerInterface|Container
@@ -99,7 +99,8 @@ abstract class NetBusTestAbstract extends TestCase
         $configProvider = (new ConfigProvider())();
         foreach ($configProvider['dependencies'] as $k => $v) {
             if (method_exists($v, '__invoke')) {
-                $container->bind($k, function () use ($container, $v) {
+                //这里要绑定成单例
+                $container->singleton($k, function () use ($container, $v) {
                     $v = $container->get($v);
                     return $v();
                 });
@@ -120,6 +121,9 @@ abstract class NetBusTestAbstract extends TestCase
         foreach (static::$wsClients as $client) {
             try {
                 $client->close();
+                milliSleep(20);
+                $client->disconnect();
+                milliSleep(20);
             } catch (Throwable) {
             }
         }
@@ -634,10 +638,10 @@ abstract class NetBusTestAbstract extends TestCase
         $uniqIds = $this->getDefaultUniqIds();
         NetBus::forceOffline($uniqIds);
         //等待网关执行完连接的关闭逻辑
-        usleep(20 * 1000);
+        milliSleep(20);
         //检查是否在线
         $ret = NetBus::checkOnline($uniqIds);
-        $this->assertEmpty($ret, var_export($ret, true));
+        $this->assertEmpty($ret, '强制关闭某几个连接的结果与预期不符');
     }
 
     /**
@@ -656,10 +660,10 @@ abstract class NetBusTestAbstract extends TestCase
         $uniqIds = $this->getDefaultUniqIds();
         NetBus::forceOfflineGuest($uniqIds);
         //等待网关执行完连接的关闭逻辑
-        usleep(20 * 1000);
+        milliSleep(20);
         //检查是否在线
         $ret = NetBus::checkOnline($uniqIds);
-        $this->assertEmpty($ret, var_export($ret, true));
+        $this->assertEmpty($ret, '强制关闭某几个空session值的连接的结果与预期不符');
         //再测试因为存在session值而关闭失败的情况
         $this->resetWsClient();
         $uniqIds = $this->getDefaultUniqIds();
@@ -673,7 +677,7 @@ abstract class NetBusTestAbstract extends TestCase
         //再强制下线
         NetBus::forceOfflineGuest($uniqIds);
         //等待网关执行完连接的关闭逻辑
-        usleep(20 * 1000);
+        milliSleep(20);
         //检查是否在线
         $ret = NetBus::checkOnline($uniqIds);
         sort($uniqIds);

@@ -135,7 +135,7 @@ class MainSocketManager implements MainSocketManagerInterface
         if ($this->status) {
             return true;
         }
-        $this->status = $this->connect() && $this->register();
+        $this->status = ($this->connect() && $this->register());
         return $this->status;
     }
 

@@ -55,4 +55,4 @@ ps：如果你的项目是非协程的，串行执行php代码的，则可以使
 7. 完成以上步骤后，两个网关服务启动完毕，算是准备好了网关这块的环境
 8. 安装[swow](https://github.com/swow/swow)扩展，测试代码是基于swow扩展编写的，之所以不采用swoole进行测试，是因为swow比较方便，不需要协程容器即可运行
 9. 执行本包的测试命令：`composer test`
-   ，或者执行命令：`php -d extension=swow .\vendor\bin\phpunit --configuration phpunit.xml`，等待一段时间，即可看到测试结果
+   ，或者执行命令：`php -d extension=swow .\vendor\bin\phpunit --configuration phpunit.xml --log-events-verbose-text phpunit.log`，等待一段时间，即可看到测试结果

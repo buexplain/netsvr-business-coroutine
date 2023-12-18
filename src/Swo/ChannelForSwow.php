@@ -58,7 +58,7 @@ class ChannelForSwow implements ChannelInterface
 
     public function isClosed(): bool
     {
-        return $this->channel->isAvailable();
+        return !$this->channel->isAvailable();
     }
 
     public function getCapacity(): int
