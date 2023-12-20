@@ -24,29 +24,8 @@ namespace NetsvrBusinessTest\Cases;
  */
 final class NetBusForNetsvrDistributedTest extends NetBusTestAbstract
 {
-    protected static array $netsvrConfig = [
-        'workerId' => 1,
-        'netsvr' => [
-            [
-                'host' => '127.0.0.1',
-                'port' => 6061,
-                'serverId' => 0,
-                //网关服务器必须支持自定义uniqId连接，即网关的netsvr.toml的配置项：ConnOpenCustomUniqIdKey，必须是：ConnOpenCustomUniqIdKey = "uniqId"
-                'ws' => 'ws://127.0.0.1:6060/netsvr?uniqId=',
-            ],
-            [
-                'host' => '127.0.0.1',
-                'port' => 6071,
-                'serverId' => 1,
-                //网关服务器必须支持自定义uniqId连接，即网关的netsvr.toml的配置项：ConnOpenCustomUniqIdKey，必须是：ConnOpenCustomUniqIdKey = "uniqId"
-                'ws' => 'ws://127.0.0.1:6070/netsvr?uniqId=',
-            ],
-        ],
-        'processCmdGoroutineNum' => 25,
-        'sendReceiveTimeout' => 5,
-        'connectTimeout' => 5,
-        'heartbeatIntervalMillisecond' => 25 * 1000,
-        'taskSocketPoolMaxConnections' => 25,
-        'taskSocketPoolWaitTimeoutMillisecond' => 3000,
-    ];
+    protected static function getNetsvrConfig(): array
+    {
+        return TestHelper::$netsvrConfigForNetsvrDistributed;
+    }
 }

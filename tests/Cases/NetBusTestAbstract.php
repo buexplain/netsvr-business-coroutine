@@ -20,25 +20,18 @@ declare(strict_types=1);
 namespace NetsvrBusinessTest\Cases;
 
 use ErrorException;
-use Hyperf\Framework\Logger\StdoutLogger;
 use Netsvr\ConnInfoDelete;
 use Netsvr\ConnInfoUpdate;
 use Netsvr\Constant;
 use NetsvrBusiness\Common;
+use NetsvrBusiness\Contract\MainSocketManagerInterface;
+use NetsvrBusiness\Contract\TaskSocketPoolMangerInterface;
 use NetsvrBusiness\NetBus;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
-use Psr\Log\LoggerInterface;
 use Throwable;
 use WebSocket\Client;
-use Hyperf\Config\Config;
-use Hyperf\Context\ApplicationContext;
-use Hyperf\Contract\ConfigInterface;
-use Hyperf\Contract\StdoutLoggerInterface;
-use NetsvrBusiness\ConfigProvider;
-use Psr\Container\ContainerInterface;
-use Illuminate\Container\Container;
 use function NetsvrBusiness\Swo\milliSleep;
 
 abstract class NetBusTestAbstract extends TestCase
@@ -53,12 +46,6 @@ abstract class NetBusTestAbstract extends TestCase
     protected static array $wsClientUniqIds = [];
 
     /**
-     * 网关配置
-     * @var array
-     */
-    protected static array $netsvrConfig = [];
-
-    /**
      * 每个网关的连接数量
      */
     protected const NETSVR_ONLINE_NUM = 3;
@@ -70,7 +57,7 @@ abstract class NetBusTestAbstract extends TestCase
      */
     public static function setUpBeforeClass(): void
     {
-        static::initContainer();
+        TestHelper::initContainer(static::getNetsvrConfig());
     }
 
     /**
@@ -78,37 +65,17 @@ abstract class NetBusTestAbstract extends TestCase
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    protected static function initContainer(): void
+    public static function tearDownAfterClass(): void
     {
-        /**
-         * @var $container ContainerInterface|Container
-         */
-        $container = new Container();
-        Container::setInstance($container);
-        Common::$container = $container;
-        ApplicationContext::setContainer($container);
-        Common::$workerProcessId = 1;
-        $container->singleton(ConfigInterface::class, function () {
-            return new Config([]);
-        });
-        $container->singleton(StdoutLoggerInterface::class, function () use ($container) {
-            return new StdoutLogger($container->get(ConfigInterface::class));
-        });
-        $container->bind(LoggerInterface::class, StdoutLoggerInterface::class);
-        $container->get(ConfigInterface::class)->set('business', static::$netsvrConfig);
-        $configProvider = (new ConfigProvider())();
-        foreach ($configProvider['dependencies'] as $k => $v) {
-            if (method_exists($v, '__invoke')) {
-                //这里要绑定成单例
-                $container->singleton($k, function () use ($container, $v) {
-                    $v = $container->get($v);
-                    return $v();
-                });
-            } else {
-                $container->bind($k, $v);
-            }
-        }
+        Common::$container->get(MainSocketManagerInterface::class)->close();
+        Common::$container->get(TaskSocketPoolMangerInterface::class)->close();
     }
+
+    /**
+     * 返回网关配置
+     * @return array
+     */
+    abstract protected static function getNetsvrConfig(): array;
 
     /**
      * 向每一个网关都初始化一个websocket连接上去
@@ -129,7 +96,7 @@ abstract class NetBusTestAbstract extends TestCase
         }
         static::$wsClients = [];
         static::$wsClientUniqIds = [];
-        foreach (static::$netsvrConfig['netsvr'] as $config) {
+        foreach (static::getNetsvrConfig()['netsvr'] as $config) {
             for ($i = 0; $i < static::NETSVR_ONLINE_NUM; $i++) {
                 //这里采用自定义的uniqId连接到网关
                 //将每个网关的serverId转成16进制
@@ -197,7 +164,7 @@ abstract class NetBusTestAbstract extends TestCase
      */
     public function testConnOpenCustomUniqIdToken(): void
     {
-        foreach (static::$netsvrConfig['netsvr'] as $config) {
+        foreach (static::getNetsvrConfig()['netsvr'] as $config) {
             $ret = NetBus::connOpenCustomUniqIdToken($config['serverId']);
             $this->assertNotEmpty($ret['uniqId'], "返回的连接所需uniqId不符合预期");
             $this->assertNotEmpty($ret['token'], "返回的连接所需token不符合预期");
@@ -880,7 +847,7 @@ abstract class NetBusTestAbstract extends TestCase
     {
         $ret = NetBus::metrics();
         $serverIds = array_unique(array_column($ret, 'serverId'));
-        $configServerIds = array_column(static::$netsvrConfig['netsvr'], 'serverId');
+        $configServerIds = array_column(static::getNetsvrConfig()['netsvr'], 'serverId');
         sort($serverIds);
         sort($configServerIds);
         $this->assertTrue($configServerIds == $serverIds);

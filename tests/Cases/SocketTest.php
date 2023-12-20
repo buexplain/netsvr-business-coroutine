@@ -29,14 +29,14 @@ class SocketTest extends TestCase
 {
     protected static function getSocket(): SocketInterface
     {
-        return new Socket('', new NullLogger(), '127.0.0.1', 6061, 10, 5);
+        return new Socket('', new NullLogger(), TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['host'], TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['port'], 10, 5);
     }
 
     /**
-     * composer test -- --filter=testConnect
+     * composer test -- --filter=testSocketConnect
      * @return void
      */
-    public function testConnect()
+    public function testSocketConnect()
     {
         $socket = self::getSocket();
         $this->assertTrue($socket->connect());
@@ -44,10 +44,10 @@ class SocketTest extends TestCase
     }
 
     /**
-     * composer test -- --filter=testSend
+     * composer test -- --filter=testSocketSend
      * @return void
      */
-    public function testSend()
+    public function testSocketSend()
     {
         $socket = $this->getSocket();
         $this->assertFalse($socket->send(Constant::PING_MESSAGE));
@@ -56,10 +56,10 @@ class SocketTest extends TestCase
     }
 
     /**
-     * composer test -- --filter=testReceive
+     * composer test -- --filter=testSocketReceive
      * @return void
      */
-    public function testReceive()
+    public function testSocketReceive()
     {
         $socket = $this->getSocket();
         $socket->connect();
@@ -68,10 +68,10 @@ class SocketTest extends TestCase
     }
 
     /**
-     * composer test -- --filter=testClose
+     * composer test -- --filter=testSocketClose
      * @return void
      */
-    public function testClose()
+    public function testSocketClose()
     {
         $socket = $this->getSocket();
         $socket->connect();
@@ -81,10 +81,10 @@ class SocketTest extends TestCase
     }
 
     /**
-     * composer test -- --filter=testIsConnected
+     * composer test -- --filter=testSocketIsConnected
      * @return void
      */
-    public function testIsConnected()
+    public function testSocketIsConnected()
     {
         $socket = $this->getSocket();
         $this->assertFalse($socket->isConnected());
