@@ -162,8 +162,6 @@ class TaskSocketPool implements TaskSocketPoolInterface
      */
     public function get(): TaskSocketInterface
     {
-        $retry = true;
-        loop:
         //代码的cpu执行权力从这里开始
         if ($this->pool->getLength() === 0 && $this->num < $this->pool->getCapacity()) {
             try {
@@ -177,11 +175,6 @@ class TaskSocketPool implements TaskSocketPoolInterface
         }
         $connection = $this->pool->pop($this->waitTimeoutMillisecond);
         if (!$connection instanceof TaskSocketInterface) {
-            //从连接池内获取连接失败，再次检查是否可以构建新连接，如果可以，则再次尝试构建一个新的连接
-            if ($retry === true && $this->pool->getLength() === 0 && $this->num < $this->pool->getCapacity()) {
-                $retry = false;
-                goto loop;
-            }
             throw new RuntimeException('TaskSocketPool pool exhausted. Cannot establish new connection before wait_timeout.');
         }
         return $connection;
@@ -214,7 +207,7 @@ class TaskSocketPool implements TaskSocketPoolInterface
         //先关闭心跳定时器
         $this->heartbeatTick->close();
         //再关闭底层的socket
-        while ($this->num > 0) {
+        while ($this->pool->getLength() > 0) {
             /**
              * @var TaskSocketInterface $socket
              */

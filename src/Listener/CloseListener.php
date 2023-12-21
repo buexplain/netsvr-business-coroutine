@@ -25,7 +25,7 @@ use Hyperf\Framework\Event\OnWorkerExit;
 use Hyperf\Process\Event\AfterCoroutineHandle;
 use Hyperf\Process\Event\AfterProcessHandle;
 use Hyperf\Event\Contract\ListenerInterface;
-use Hyperf\Server\Event\AllCoroutineServersClosed;
+use Hyperf\Server\Event\CoroutineServerStop;
 use NetsvrBusiness\Contract\MainSocketManagerInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolMangerInterface;
 use Psr\Container\ContainerExceptionInterface;
@@ -58,8 +58,8 @@ class CloseListener implements ListenerInterface
             AfterProcessHandle::class,
             //swoole协程风格服务器的自定义进程结束
             AfterCoroutineHandle::class,
-            //swoole协程风格服务器进程结束
-            AllCoroutineServersClosed::class,
+            //swoole协程风格服务器进程结束，swow服务器进程结束
+            CoroutineServerStop::class,
         ];
     }
 

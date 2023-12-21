@@ -21,6 +21,7 @@ namespace NetsvrBusiness\Listener;
 
 use Hyperf\Event\Contract\ListenerInterface;
 use Hyperf\Framework\Event\AfterWorkerStart;
+use Hyperf\Server\Event\MainCoroutineServerStart;
 use NetsvrBusiness\Common;
 use NetsvrBusiness\Contract\MainSocketManagerInterface;
 use Psr\Container\ContainerExceptionInterface;
@@ -45,7 +46,10 @@ class StartMainSocketListener implements ListenerInterface
     public function listen(): array
     {
         return [
+            //swoole异步风格服务器会触发该事件
             AfterWorkerStart::class,
+            //swoole协程风格服务器，swow引擎时会触发该事件
+            MainCoroutineServerStart::class,
         ];
     }
 
@@ -57,14 +61,16 @@ class StartMainSocketListener implements ListenerInterface
      */
     public function process(object $event): void
     {
-        //记住当前进程的编号
-        Common::$workerProcessId = $event->workerId;
-        /**
-         * @var AfterWorkerStart $event
-         */
-        if ($event->server->taskworker) {
-            //task进程不能搞这个，因为task进程往往是没开启协程的
-            return;
+        if ($event instanceof AfterWorkerStart) {
+            if ($event->server->taskworker) {
+                //task进程不能搞这个，因为task进程往往是没开启协程的
+                return;
+            }
+            //记住当前进程的编号
+            Common::$workerProcessId = $event->workerId;
+        } elseif ($event instanceof MainCoroutineServerStart) {
+            //没有编号，就记住进程的pid
+            Common::$workerProcessId = getmypid();
         }
         $this->container->get(MainSocketManagerInterface::class)->start();
     }

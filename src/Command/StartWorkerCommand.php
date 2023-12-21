@@ -27,6 +27,7 @@ use Swoole\Process\Pool;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use function NetsvrBusiness\Swo\cpuNum;
 
 /**
  * 只在swoole下使用
@@ -42,7 +43,7 @@ class StartWorkerCommand extends WorkerCommand
         $this->ignoreValidationErrors();
         $this->setName('business:start')
             ->setDefinition([
-                new InputOption('workers', 'w', InputOption::VALUE_REQUIRED, 'Specify the number of process.', swoole_cpu_num()),
+                new InputOption('workers', 'w', InputOption::VALUE_REQUIRED, 'Specify the number of process.', cpuNum()),
             ])
             ->setDescription('Start business service.');
     }
@@ -65,7 +66,7 @@ class StartWorkerCommand extends WorkerCommand
         }
         //开始启动多进程
         $workers = intval($input->getOption('workers'));
-        $pool = new Pool($workers > 0 ? $workers : swoole_cpu_num());
+        $pool = new Pool($workers > 0 ? $workers : cpuNum());
         $pool->set(['enable_coroutine' => true]);
         $pool->on('WorkerStart', function (Pool $pool, $workerProcessId) {
             //记录主进程pid

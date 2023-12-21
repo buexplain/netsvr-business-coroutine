@@ -35,3 +35,25 @@ function milliSleep(int $millisecond): void
     }
     usleep($millisecond * 1000);
 }
+
+/**
+ * @return int
+ */
+function cpuNum(): int
+{
+    if (function_exists('swoole_cpu_num')) {
+        return swoole_cpu_num();
+    }
+    if (DIRECTORY_SEPARATOR === '\\') {
+        return 1;
+    }
+    $count = 4;
+    if (is_callable('shell_exec')) {
+        if (strtolower(PHP_OS) === 'darwin') {
+            $count = (int)shell_exec('sysctl -n machdep.cpu.core_count');
+        } else {
+            $count = (int)shell_exec('nproc');
+        }
+    }
+    return $count > 0 ? $count : 4;
+}

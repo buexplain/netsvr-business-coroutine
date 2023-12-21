@@ -13,6 +13,9 @@
         <testsuite name="Socket Tests">
             <file>./tests/Cases/SocketTest.php</file>
         </testsuite>
+        <testsuite name="TaskSocketPool Tests">
+            <file>./tests/Cases/TaskSocketPoolTest.php</file>
+        </testsuite>
         <testsuite name="MainSocketManager Tests">
             <file>./tests/Cases/MainSocketManagerTest.php</file>
         </testsuite>
