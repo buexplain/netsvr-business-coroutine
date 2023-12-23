@@ -103,13 +103,7 @@ class Socket implements SocketInterface
      */
     public function __destruct()
     {
-        if (is_resource($this->socket)) {
-            try {
-                fclose($this->socket);
-            } catch (Throwable) {
-            }
-            $this->socket = null;
-        }
+        $this->close();
     }
 
     /**
@@ -143,13 +137,21 @@ class Socket implements SocketInterface
      */
     public function close(): void
     {
-        if ($this->connected) {
-            $this->connected = false;
-            $this->__destruct();
-            $this->logger->info(sprintf($this->logPrefix . 'close connection %s:%s ok.',
-                $this->host,
-                $this->port,
-            ));
+        if (!$this->connected) {
+            return;
+        }
+        $this->connected = false;
+        if (is_resource($this->socket)) {
+            try {
+                fclose($this->socket);
+            } catch (Throwable) {
+            } finally {
+                $this->socket = null;
+                $this->logger->info(sprintf($this->logPrefix . 'close connection %s:%s ok.',
+                    $this->host,
+                    $this->port,
+                ));
+            }
         }
     }
 
