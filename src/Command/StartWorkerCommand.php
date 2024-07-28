@@ -27,7 +27,7 @@ use Swoole\Process\Pool;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
-use function NetsvrBusiness\Swo\cpuNum;
+use function NetsvrBusiness\cpuNum;
 
 /**
  * 只在swoole下使用
@@ -88,7 +88,6 @@ class StartWorkerCommand extends WorkerCommand
                     if (Coroutine\System::waitSignal(SIGTERM) === true) {
                         break;
                     }
-                    //Coroutine::sleep(3);break;
                 }
                 //关闭mainSocket
                 $this->container->get(MainSocketManagerInterface::class)->close();

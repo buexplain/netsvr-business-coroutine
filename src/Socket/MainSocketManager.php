@@ -21,10 +21,10 @@ namespace NetsvrBusiness\Socket;
 
 use NetsvrBusiness\Contract\MainSocketInterface;
 use NetsvrBusiness\Contract\MainSocketManagerInterface;
-use NetsvrBusiness\Exception\DuplicateServerIdException;
 use NetsvrBusiness\Swo\Coroutine;
 use NetsvrBusiness\Swo\WaitGroup;
 use Throwable;
+use function NetsvrBusiness\workerAddrConvertToHex;
 
 /**
  *
@@ -52,26 +52,22 @@ class MainSocketManager implements MainSocketManagerInterface
     }
 
     /**
-     * 返回与serverId对应的网关服务器连接的mainSocket对象
-     * @param int $serverId
+     * 根据网关的workerAddr获取具体网关的连接，注意这个地址是16进制字符串
+     * @param string $workerAddrAsHex
      * @return MainSocketInterface|null
      */
-    public function getSocket(int $serverId): ?MainSocketInterface
+    public function getSocket(string $workerAddrAsHex): ?MainSocketInterface
     {
-        return $this->status ? ($this->pool[$serverId] ?? null) : null;
+        return $this->status ? ($this->pool[$workerAddrAsHex] ?? null) : null;
     }
 
     /**
      * @param MainSocketInterface $socket
      * @return void
-     * @throws DuplicateServerIdException
      */
-    public function set(MainSocketInterface $socket): void
+    public function addSocket(MainSocketInterface $socket): void
     {
-        if (isset($this->pool[$socket->getServerId()])) {
-            throw new DuplicateServerIdException('serverId option in file business.php is duplicate: ' . $socket->getServerId());
-        }
-        $this->pool[$socket->getServerId()] = $socket;
+        $this->pool[workerAddrConvertToHex($socket->getWorkerAddr())] = $socket;
     }
 
     /**

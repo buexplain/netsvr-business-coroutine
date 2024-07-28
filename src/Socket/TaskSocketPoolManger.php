@@ -23,9 +23,10 @@ use NetsvrBusiness\Contract\TaskSocketInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolMangerInterface;
 use Throwable;
+use function NetsvrBusiness\workerAddrConvertToHex;
 
 /**
- *
+ * 任务socket连接池管理器，管理各个与网关的连接池
  */
 class TaskSocketPoolManger implements TaskSocketPoolMangerInterface
 {
@@ -52,9 +53,9 @@ class TaskSocketPoolManger implements TaskSocketPoolMangerInterface
      * @param TaskSocketPoolInterface $pool
      * @return void
      */
-    public function set(TaskSocketPoolInterface $pool): void
+    public function addSocket(TaskSocketPoolInterface $pool): void
     {
-        $this->pools[$pool->getServerId()] = $pool;
+        $this->pools[workerAddrConvertToHex($pool->getWorkerAddr())] = $pool;
     }
 
     /**
@@ -90,14 +91,14 @@ class TaskSocketPoolManger implements TaskSocketPoolMangerInterface
     }
 
     /**
-     * 根据网关的serverId获取具体网关的连接
-     * @param int $serverId
+     * 根据网关的workerAddr获取具体网关的连接，注意这个地址是16进制字符串
+     * @param string $workerAddrAsHex
      * @return TaskSocketInterface|null
      */
-    public function getSocket(int $serverId): ?TaskSocketInterface
+    public function getSocket(string $workerAddrAsHex): ?TaskSocketInterface
     {
-        if (isset($this->pools[$serverId])) {
-            return $this->pools[$serverId]->get();
+        if (isset($this->pools[$workerAddrAsHex])) {
+            return $this->pools[$workerAddrAsHex]->get();
         }
         return null;
     }

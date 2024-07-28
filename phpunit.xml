@@ -26,7 +26,6 @@
             <file>./tests/Cases/NetBusForNetsvrDistributedTest.php</file>
         </testsuite>
     </testsuites>
-    <coverage/>
     <source>
         <include>
             <directory>./src</directory>

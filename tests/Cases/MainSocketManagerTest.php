@@ -22,20 +22,19 @@ namespace NetsvrBusinessTest\Cases;
 use Illuminate\Container\Container;
 use Netsvr\ConnClose;
 use Netsvr\ConnOpen;
-use Netsvr\Constant;
 use Netsvr\Transfer;
 use NetsvrBusiness\Common;
 use NetsvrBusiness\Contract\EventInterface;
 use NetsvrBusiness\Contract\MainSocketInterface;
 use NetsvrBusiness\Contract\MainSocketManagerInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolMangerInterface;
-use NetsvrBusiness\NetBus;
 use NetsvrBusiness\Swo\Channel;
 use NetsvrBusiness\Swo\Coroutine;
 use PHPUnit\Framework\TestCase;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
 use WebSocket\Client;
+use function NetsvrBusiness\workerAddrConvertToHex;
 
 class MainSocketManagerTest extends TestCase
 {
@@ -52,6 +51,7 @@ class MainSocketManagerTest extends TestCase
     }
 
     /**
+     * 每次测试后都会调用此方法关闭所有连接
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
@@ -73,8 +73,8 @@ class MainSocketManagerTest extends TestCase
     {
         $this->assertTrue(Common::$container->get(MainSocketManagerInterface::class)->start(), '连接到网关失败');
         $this->assertTrue(count(Common::$container->get(MainSocketManagerInterface::class)->getSockets()) === count(TestHelper::$netsvrConfigForNetsvrSingle['netsvr']), '连接成功后，可用的socket对象与预期不符');
-        $this->assertTrue(Common::$container->get(MainSocketManagerInterface::class)->getSocket(TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['serverId']) instanceof MainSocketInterface);
-        $this->assertFalse(Common::$container->get(MainSocketManagerInterface::class)->getSocket(1991) instanceof MainSocketInterface);
+        $this->assertTrue(Common::$container->get(MainSocketManagerInterface::class)->getSocket(workerAddrConvertToHex(TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['workerAddr'])) instanceof MainSocketInterface);
+        $this->assertFalse(Common::$container->get(MainSocketManagerInterface::class)->getSocket('abc') instanceof MainSocketInterface);
     }
 
     /**
@@ -88,8 +88,8 @@ class MainSocketManagerTest extends TestCase
         $this->assertTrue(Common::$container->get(MainSocketManagerInterface::class)->start(), '连接到网关失败');
         Common::$container->get(MainSocketManagerInterface::class)->close();
         $this->assertEmpty(Common::$container->get(MainSocketManagerInterface::class)->getSockets(), '连接关闭失败');
-        $this->assertFalse(Common::$container->get(MainSocketManagerInterface::class)->getSocket(TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['serverId']) instanceof MainSocketInterface);
-        $this->assertFalse(Common::$container->get(MainSocketManagerInterface::class)->getSocket(1991) instanceof MainSocketInterface);
+        $this->assertFalse(Common::$container->get(MainSocketManagerInterface::class)->getSocket(workerAddrConvertToHex(TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['workerAddr'])) instanceof MainSocketInterface);
+        $this->assertFalse(Common::$container->get(MainSocketManagerInterface::class)->getSocket('abc') instanceof MainSocketInterface);
     }
 
     /**
@@ -126,7 +126,7 @@ class MainSocketManagerTest extends TestCase
         //测试一下心跳的发送是否会产生异常
         foreach (TestHelper::$netsvrConfigForNetsvrSingle['netsvr'] as $config) {
             for ($i = 0; $i < 1000; $i++) {
-                Common::$container->get(MainSocketManagerInterface::class)->getSocket($config['serverId'])->send(Constant::PING_MESSAGE);
+                Common::$container->get(MainSocketManagerInterface::class)->getSocket(workerAddrConvertToHex($config['workerAddr']))->send(TestHelper::WORKER_HEARTBEAT_MESSAGE);
             }
         }
         //测试往每个websocket发送数据，看看能否被event处理
@@ -134,18 +134,9 @@ class MainSocketManagerTest extends TestCase
         Coroutine::create(function () use ($testMessage) {
             //循环每个网关，并与之构建websocket连接
             foreach (TestHelper::$netsvrConfigForNetsvrSingle['netsvr'] as $config) {
-                //这里采用自定义的uniqId连接到网关
-                //将每个网关的serverId转成16进制
-                $hex = ($config['serverId'] < 16 ? '0' . dechex($config['serverId']) : dechex($config['serverId']));
-                //将网关的serverId的16进制格式拼接到随机的uniqId前面
-                $uniqId = $hex . uniqid();
-                //从网关获取连接所需要的token
-                $token = NetBus::connOpenCustomUniqIdToken($config['serverId'])['token'];
-                $client = new Client($config["ws"] . $uniqId . '&token=' . $token);
+                $client = new Client($config["ws"]);
                 $client->setTimeout(5);
-                //往当前的websocket中写入一个信息
-                $workerId = str_pad((string)(TestHelper::$netsvrConfigForNetsvrSingle['workerId']), 3, '0', STR_PAD_LEFT);
-                $client->text($workerId . $testMessage);
+                $client->text($testMessage);
                 $client->close();
                 $client->disconnect();
             }

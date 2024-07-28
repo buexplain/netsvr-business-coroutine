@@ -19,7 +19,6 @@ declare(strict_types=1);
 
 namespace NetsvrBusiness\Socket;
 
-use Netsvr\Constant;
 use NetsvrBusiness\Contract\TaskSocketFactoryInterface;
 use NetsvrBusiness\Contract\TaskSocketInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolInterface;
@@ -30,7 +29,7 @@ use RuntimeException;
 use Throwable;
 
 /**
- *
+ * task socket的连接池
  */
 class TaskSocketPool implements TaskSocketPoolInterface
 {
@@ -55,9 +54,9 @@ class TaskSocketPool implements TaskSocketPoolInterface
      */
     protected TaskSocketFactoryInterface $factory;
     /**
-     * @var int 网关的编号，必须与网关服务的netsvr.toml配置文件的配置一致
+     * @var string 网关的worker服务器监听的tcp地址
      */
-    protected int $serverId;
+    protected string $workerAddr;
     /**
      * @var int 获取连接超时
      */
@@ -67,6 +66,10 @@ class TaskSocketPool implements TaskSocketPoolInterface
      * @var int 与网关维持心跳的间隔毫秒数
      */
     protected int $heartbeatIntervalMillisecond;
+    /**
+     * @var string business进程向网关的worker服务器发送的心跳消息
+     */
+    protected string $workerHeartbeatMessage;
 
     /**
      * 心跳定时器
@@ -79,7 +82,8 @@ class TaskSocketPool implements TaskSocketPoolInterface
      * @param LoggerInterface $logger
      * @param int $size
      * @param TaskSocketFactoryInterface $factory
-     * @param int $serverId
+     * @param string $workerAddr
+     * @param string $workerHeartbeatMessage
      * @param int $waitTimeoutMillisecond
      * @param int $heartbeatIntervalMillisecond
      */
@@ -88,7 +92,8 @@ class TaskSocketPool implements TaskSocketPoolInterface
         LoggerInterface            $logger,
         int                        $size,
         TaskSocketFactoryInterface $factory,
-        int                        $serverId,
+        string                     $workerAddr,
+        string                     $workerHeartbeatMessage,
         int                        $waitTimeoutMillisecond,
         int                        $heartbeatIntervalMillisecond,
     )
@@ -97,7 +102,8 @@ class TaskSocketPool implements TaskSocketPoolInterface
         $this->logger = $logger;
         $this->factory = $factory;
         $this->pool = new Channel($size);
-        $this->serverId = $serverId;
+        $this->workerAddr = $workerAddr;
+        $this->workerHeartbeatMessage = $workerHeartbeatMessage;
         $this->waitTimeoutMillisecond = $waitTimeoutMillisecond;
         $this->heartbeatIntervalMillisecond = $heartbeatIntervalMillisecond;
         $this->heartbeatTick = new Channel();
@@ -105,11 +111,11 @@ class TaskSocketPool implements TaskSocketPoolInterface
     }
 
     /**
-     * @return int 返回网关的唯一id
+     * @return string 返回当前连接的netsvr网关的worker服务器监听的tcp地址
      */
-    public function getServerId(): int
+    public function getWorkerAddr(): string
     {
-        return $this->serverId;
+        return $this->workerAddr;
     }
 
     /**
@@ -131,8 +137,7 @@ class TaskSocketPool implements TaskSocketPoolInterface
                             $id = spl_object_id($socket);
                             if (!isset($ret[$id])) {
                                 $ret[$id] = true;
-                                $socket->send(Constant::PING_MESSAGE);
-                                $socket->receive();
+                                $socket->send($this->workerHeartbeatMessage);
                             }
                         } catch (Throwable) {
                         } finally {
@@ -141,18 +146,9 @@ class TaskSocketPool implements TaskSocketPoolInterface
                     }
                 }
             } finally {
-                $socket = $this->pool->pop(20);
-                if ($socket instanceof TaskSocketInterface) {
-                    $host = $socket->getHost();
-                    $port = $socket->getPort();
-                    $socket->release();
-                    $this->logger->info(sprintf($this->logPrefix . 'loopHeartbeat %s:%s quit.',
-                        $host,
-                        $port
-                    ));
-                } else {
-                    $this->logger->info($this->logPrefix . 'loopHeartbeat quit.');
-                }
+                $this->logger->info(sprintf($this->logPrefix . 'loopHeartbeat %s quit.',
+                    $this->getWorkerAddr(),
+                ));
             }
         });
     }

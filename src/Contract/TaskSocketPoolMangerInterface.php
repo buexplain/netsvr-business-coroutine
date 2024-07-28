@@ -31,11 +31,11 @@ interface TaskSocketPoolMangerInterface
     public function close(): void;
 
     /**
-     * 设置一个连接池
+     * 添加一个连接池
      * @param TaskSocketPoolInterface $pool
      * @return void
      */
-    public function set(TaskSocketPoolInterface $pool): void;
+    public function addSocket(TaskSocketPoolInterface $pool): void;
 
     /**
      * 返回连接池的数量
@@ -50,9 +50,9 @@ interface TaskSocketPoolMangerInterface
     public function getSockets(): array;
 
     /**
-     * 根据网关的serverId获取具体网关的连接
-     * @param int $serverId
+     * 根据网关的workerAddr获取具体网关的连接，注意这个地址是16进制字符串
+     * @param string $workerAddrAsHex
      * @return TaskSocketInterface|null
      */
-    public function getSocket(int $serverId): ?TaskSocketInterface;
+    public function getSocket(string $workerAddrAsHex): ?TaskSocketInterface;
 }

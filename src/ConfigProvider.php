@@ -25,7 +25,6 @@ use NetsvrBusiness\Command\StopWorkerCommand;
 use NetsvrBusiness\Contract\EventInterface;
 use NetsvrBusiness\Contract\MainSocketInterface;
 use NetsvrBusiness\Contract\MainSocketManagerInterface;
-use NetsvrBusiness\Contract\ServerIdConvertInterface;
 use NetsvrBusiness\Contract\SocketInterface;
 use NetsvrBusiness\Contract\TaskSocketFactoryInterface;
 use NetsvrBusiness\Contract\TaskSocketInterface;
@@ -37,6 +36,7 @@ use NetsvrBusiness\Socket\MainSocket;
 use NetsvrBusiness\Socket\Socket;
 use NetsvrBusiness\Socket\TaskSocket;
 use NetsvrBusiness\Socket\TaskSocketPool;
+use App\Event;
 
 /**
  *
@@ -67,8 +67,6 @@ class ConfigProvider
                 TaskSocketPoolMangerInterface::class => TaskSocketPoolMangerFactory::class,
                 //处理netsvr网关发来的连接事件的实现，业务层必须实现该接口
                 EventInterface::class => Event::class,
-                //网关下发给连接的唯一id，转换成网关唯一id的实现，用于定位连接目前处于哪台网关机器
-                ServerIdConvertInterface::class => ServerIdConvert::class,
             ],
             'commands' => [
                 StartWorkerCommand::class,
@@ -79,8 +77,14 @@ class ConfigProvider
                 [
                     'id' => 'config',
                     'description' => 'The config of netsvr-business.',
-                    'source' => __DIR__ . '/../publish/business.php',
-                    'destination' => BASE_PATH . '/config/autoload/business.php',
+                    'source' => __DIR__ . '/../publish/netsvr.php',
+                    'destination' => BASE_PATH . '/config/autoload/netsvr.php',
+                ],
+                [
+                    'id' => 'eventInterface',
+                    'description' => 'The EventInterface of netsvr-business.',
+                    'source' => __DIR__ . '/../publish/event.php',
+                    'destination' => BASE_PATH . '/app/Event.php',
                 ],
             ],
         ];

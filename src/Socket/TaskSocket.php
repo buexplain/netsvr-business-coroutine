@@ -36,22 +36,20 @@ class TaskSocket extends Socket implements TaskSocketInterface
     protected TaskSocketPoolInterface $pool;
 
     /**
-     * @param string $host netsvr网关的worker服务器监听的主机
-     * @param int $port netsvr网关的worker服务器监听的端口
+     * @param string $workerAddr netsvr网关的worker服务器监听的tcp地址
      * @param int $sendReceiveTimeout 读写数据超时，单位秒
      * @param int $connectTimeout 连接到服务端超时，单位秒
      */
     public function __construct(
         string                  $logPrefix,
         LoggerInterface         $logger,
-        string                  $host,
-        int                     $port,
+        string                  $workerAddr,
         int                     $sendReceiveTimeout,
         int                     $connectTimeout,
         TaskSocketPoolInterface $pool
     )
     {
-        parent::__construct($logPrefix, $logger, $host, $port, $sendReceiveTimeout, $connectTimeout);
+        parent::__construct($logPrefix, $logger, $workerAddr, $sendReceiveTimeout, $connectTimeout);
         $this->pool = $pool;
     }
 

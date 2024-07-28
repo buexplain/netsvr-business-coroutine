@@ -21,6 +21,9 @@ namespace NetsvrBusiness\Exception;
 
 use RuntimeException;
 
+/**
+ * 当swow扩展与swoole扩展不存在的时候，抛出这个异常
+ */
 class DependentCoroutineEngineException extends RuntimeException
 {
 

@@ -23,6 +23,7 @@ use Hyperf\Contract\ConfigInterface;
 use Hyperf\Contract\StdoutLoggerInterface;
 use Hyperf\Framework\Logger\StdoutLogger;
 use Illuminate\Container\Container;
+use Netsvr\Event;
 use NetsvrBusiness\Common;
 use NetsvrBusiness\ConfigProvider;
 use Psr\Container\ContainerExceptionInterface;
@@ -33,17 +34,21 @@ use Psr\Log\LogLevel;
 
 class TestHelper
 {
+    public const WORKER_HEARTBEAT_MESSAGE = '~6YOt5rW35piO~';
+
+    /**
+     * 网关单机部署的情况
+     * @var array
+     */
     public static array $netsvrConfigForNetsvrSingle = [
-        'workerId' => 1,
         'netsvr' => [
             [
-                'host' => '127.0.0.1',
-                'port' => 6061,
-                'serverId' => 0,
-                //网关服务器必须支持自定义uniqId连接，即网关的netsvr.toml的配置项：ConnOpenCustomUniqIdKey，必须是：ConnOpenCustomUniqIdKey = "uniqId"
-                'ws' => 'ws://127.0.0.1:6060/netsvr?uniqId=',
+                'workerAddr' => '127.0.0.1:6071',
+                'ws' => 'ws://127.0.0.1:6070/netsvr',
             ]
         ],
+        'events' => Event::OnOpen | Event::OnMessage | Event::OnClose,
+        'workerHeartbeatMessage' => self::WORKER_HEARTBEAT_MESSAGE,
         'processCmdGoroutineNum' => 25,
         'sendReceiveTimeout' => 5,
         'connectTimeout' => 5,
@@ -52,24 +57,23 @@ class TestHelper
         'taskSocketPoolWaitTimeoutMillisecond' => 3000,
     ];
 
+    /**
+     * 网关分布式部署的情况
+     * @var array
+     */
     public static array $netsvrConfigForNetsvrDistributed = [
-        'workerId' => 1,
         'netsvr' => [
             [
-                'host' => '127.0.0.1',
-                'port' => 6061,
-                'serverId' => 0,
-                //网关服务器必须支持自定义uniqId连接，即网关的netsvr.toml的配置项：ConnOpenCustomUniqIdKey，必须是：ConnOpenCustomUniqIdKey = "uniqId"
-                'ws' => 'ws://127.0.0.1:6060/netsvr?uniqId=',
+                'workerAddr' => '127.0.0.1:6071',
+                'ws' => 'ws://127.0.0.1:6070/netsvr',
             ],
             [
-                'host' => '127.0.0.1',
-                'port' => 6071,
-                'serverId' => 1,
-                //网关服务器必须支持自定义uniqId连接，即网关的netsvr.toml的配置项：ConnOpenCustomUniqIdKey，必须是：ConnOpenCustomUniqIdKey = "uniqId"
-                'ws' => 'ws://127.0.0.1:6070/netsvr?uniqId=',
+                'workerAddr' => '127.0.0.1:6081',
+                'ws' => 'ws://127.0.0.1:6080/netsvr',
             ],
         ],
+        'events' => Event::OnOpen | Event::OnMessage | Event::OnClose,
+        'workerHeartbeatMessage' => self::WORKER_HEARTBEAT_MESSAGE,
         'processCmdGoroutineNum' => 25,
         'sendReceiveTimeout' => 5,
         'connectTimeout' => 5,
@@ -111,9 +115,11 @@ class TestHelper
             return new StdoutLogger($container->get(ConfigInterface::class));
         });
         $container->bind(LoggerInterface::class, StdoutLoggerInterface::class);
-        $container->get(ConfigInterface::class)->set('business', $netsvrConfig);
+        $container->get(ConfigInterface::class)->set('netsvr', $netsvrConfig);
         $configProvider = (new ConfigProvider())();
         foreach ($configProvider['dependencies'] as $k => $v) {
+            //event的实现不是正常的命名空间，所以要特殊处理
+            $v === 'App\Event' && require_once __DIR__ . '/../../publish/Event.php';
             if (method_exists($v, '__invoke')) {
                 //这里要绑定成单例
                 $container->singleton($k, function () use ($container, $v) {

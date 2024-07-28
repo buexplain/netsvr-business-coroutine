@@ -51,12 +51,13 @@ class TaskSocketPoolMangerFactory
             return $this->manger;
         }
         $logPrefix = sprintf('TaskSocket#%d', Common::$workerProcessId);
-        $config = config('business', []);
+        $config = config('netsvr', []);
         $netsvr = Arr::pull($config, 'netsvr', []);
         if (empty($netsvr)) {
             return null;
         }
         $manger = new TaskSocketPoolManger();
+        $this->manger = $manger;
         foreach ($netsvr as $item) {
             //将网关的特定参数与公共参数进行合并，网关的特定参数覆盖公共参数
             $item = array_merge($config, $item);
@@ -73,12 +74,12 @@ class TaskSocketPoolMangerFactory
                 'heartbeatIntervalMillisecond' => $item['heartbeatIntervalMillisecond'],
                 'size' => $item['taskSocketPoolMaxConnections'],
                 'factory' => $factory,
-                'serverId' => $item['serverId'],
+                'workerAddr' => $item['workerAddr'],
+                'workerHeartbeatMessage' => $item['workerHeartbeatMessage'],
                 'waitTimeoutMillisecond' => $item['taskSocketPoolWaitTimeoutMillisecond'],
             ]);
-            $manger->set($pool);
+            $manger->addSocket($pool);
         }
-        $this->manger = $manger;
         return $manger;
     }
 }

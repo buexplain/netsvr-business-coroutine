@@ -34,16 +34,14 @@ class TaskSocketFactory implements TaskSocketFactoryInterface
     /**
      * @param string $logPrefix
      * @param LoggerInterface $logger
-     * @param string $host
-     * @param int $port
+     * @param string $workerAddr
      * @param int $sendReceiveTimeout
      * @param int $connectTimeout
      */
     public function __construct(
         protected string          $logPrefix,
         protected LoggerInterface $logger,
-        protected string          $host,
-        protected int             $port,
+        protected string          $workerAddr,
         protected int             $sendReceiveTimeout,
         protected int             $connectTimeout,
     )
@@ -60,14 +58,13 @@ class TaskSocketFactory implements TaskSocketFactoryInterface
         $socket = make(TaskSocketInterface::class, [
             'logPrefix' => $this->logPrefix,
             'logger' => $this->logger,
-            'host' => $this->host,
-            'port' => $this->port,
+            'workerAddr' => $this->workerAddr,
             'sendReceiveTimeout' => $this->sendReceiveTimeout,
             'connectTimeout' => $this->connectTimeout,
             'pool' => $pool,
         ]);
         if (!$socket->connect()) {
-            throw new SocketConnectException(sprintf('connect to %s:%s failed', $this->host, $this->port));
+            throw new SocketConnectException(sprintf('connect to %s failed', $this->workerAddr));
         }
         return $socket;
     }

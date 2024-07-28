@@ -19,7 +19,6 @@ declare(strict_types=1);
 
 namespace NetsvrBusinessTest\Cases;
 
-use Netsvr\Constant;
 use NetsvrBusiness\Contract\TaskSocketFactoryInterface;
 use NetsvrBusiness\Contract\TaskSocketInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolInterface;
@@ -56,8 +55,7 @@ class TaskSocketPoolTest extends TestCase
                 $socket = new TaskSocket(
                     '',
                     $this->container->get(LoggerInterface::class),
-                    TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['host'],
-                    TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['port'],
+                    TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['workerAddr'],
                     TestHelper::$netsvrConfigForNetsvrSingle['sendReceiveTimeout'],
                     TestHelper::$netsvrConfigForNetsvrSingle['connectTimeout'],
                     $pool
@@ -71,7 +69,8 @@ class TaskSocketPoolTest extends TestCase
             $container->get(LoggerInterface::class),
             TestHelper::$netsvrConfigForNetsvrSingle['taskSocketPoolMaxConnections'],
             $factory,
-            TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['serverId'],
+            TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['workerAddr'],
+            TestHelper::WORKER_HEARTBEAT_MESSAGE,
             TestHelper::$netsvrConfigForNetsvrSingle['taskSocketPoolWaitTimeoutMillisecond'],
             TestHelper::$netsvrConfigForNetsvrSingle['heartbeatIntervalMillisecond'],
         );
@@ -83,12 +82,8 @@ class TaskSocketPoolTest extends TestCase
         self::$pool->close();
     }
 
-    public function testTaskSocketPoolServerId()
-    {
-        self::assertTrue(self::$pool->getServerId() === TestHelper::$netsvrConfigForNetsvrSingle['netsvr'][0]['serverId'], 'taskPool的serverId与初始化时的入参不符');
-    }
-
     /**
+     * composer test -- --filter=testTaskSocketPoolGet
      * @return void
      * @throws Throwable
      */
@@ -98,6 +93,7 @@ class TaskSocketPoolTest extends TestCase
     }
 
     /**
+     * composer test -- --filter=testTaskSocketPoolRelease
      * @return void
      * @throws Throwable
      */
@@ -111,6 +107,7 @@ class TaskSocketPoolTest extends TestCase
     }
 
     /**
+     * composer test -- --filter=testTaskSocketPoolSendReceive
      * @return void
      * @throws Throwable
      */
@@ -118,11 +115,11 @@ class TaskSocketPoolTest extends TestCase
     {
         //测试发送与接收方法
         $socket = self::$pool->get();
-        $this->assertTrue($socket->send(Constant::PING_MESSAGE), '通过taskSocket发送心跳数据失败');
-        $this->assertTrue($socket->receive() === Constant::PONG_MESSAGE, '通过taskSocket接收心跳数据失败');
+        $this->assertTrue($socket->send(TestHelper::WORKER_HEARTBEAT_MESSAGE), '通过taskSocket发送心跳数据失败');
     }
 
     /**
+     * composer test -- --filter=testTaskSocketPoolConcurrencyGet
      * @return void
      * @throws Throwable
      */

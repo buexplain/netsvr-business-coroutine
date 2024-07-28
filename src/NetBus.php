@@ -20,30 +20,41 @@ declare(strict_types=1);
 namespace NetsvrBusiness;
 
 use Exception;
-use Google\Protobuf\Internal\Message;
 use Google\Protobuf\Internal\RepeatedField;
-use Hyperf\Context\ApplicationContext;
 use Netsvr\Broadcast;
 use Netsvr\CheckOnlineReq;
 use Netsvr\CheckOnlineResp;
 use Netsvr\Cmd;
+use Netsvr\ConnInfoByCustomerIdReq;
+use Netsvr\ConnInfoByCustomerIdResp;
+use Netsvr\ConnInfoByCustomerIdRespItem;
+use Netsvr\ConnInfoByCustomerIdRespItems;
 use Netsvr\ConnInfoDelete;
 use Netsvr\ConnInfoReq;
 use Netsvr\ConnInfoResp;
 use Netsvr\ConnInfoRespItem;
 use Netsvr\ConnInfoUpdate;
-use Netsvr\ConnOpenCustomUniqIdTokenResp;
+use Netsvr\CustomerIdCountResp;
+use Netsvr\CustomerIdListResp;
 use Netsvr\ForceOffline;
+use Netsvr\ForceOfflineByCustomerId;
 use Netsvr\ForceOfflineGuest;
 use Netsvr\LimitReq;
 use Netsvr\LimitResp;
-use Netsvr\LimitRespItem;
 use Netsvr\MetricsResp;
 use Netsvr\MetricsRespItem;
 use Netsvr\Multicast;
+use Netsvr\MulticastByCustomerId;
 use Netsvr\SingleCast;
 use Netsvr\SingleCastBulk;
+use Netsvr\SingleCastBulkByCustomerId;
+use Netsvr\SingleCastByCustomerId;
 use Netsvr\TopicCountResp;
+use Netsvr\TopicCustomerIdCountReq;
+use Netsvr\TopicCustomerIdCountResp;
+use Netsvr\TopicCustomerIdListReq;
+use Netsvr\TopicCustomerIdListResp;
+use Netsvr\TopicCustomerIdListRespItem;
 use Netsvr\TopicDelete;
 use Netsvr\TopicListResp;
 use Netsvr\TopicPublish;
@@ -59,55 +70,19 @@ use Netsvr\UniqIdCountResp;
 use Netsvr\UniqIdListResp;
 use NetsvrBusiness\Contract\MainSocketInterface;
 use NetsvrBusiness\Contract\MainSocketManagerInterface;
-use NetsvrBusiness\Contract\ServerIdConvertInterface;
 use NetsvrBusiness\Contract\TaskSocketInterface;
 use NetsvrBusiness\Contract\TaskSocketPoolMangerInterface;
 use NetsvrBusiness\Exception\SocketReceiveException;
-use NetsvrBusiness\Swo\Channel;
 use NetsvrBusiness\Swo\Coroutine;
 use Psr\Container\ContainerExceptionInterface;
 use Psr\Container\NotFoundExceptionInterface;
 use Throwable;
 
 /**
- *
  * 网络总线类，主打的就是与网关服务交互
  */
 class NetBus
 {
-    /**
-     * 获取客户端连接网关时，传递自定义uniqId所需的token
-     * 返回的uniqId与token并无绑定关系，你可以采用返回的uniqId，也可以自己构造一个uniqId
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
-     * @throws Exception
-     */
-    public static function connOpenCustomUniqIdToken(int $serverId): array
-    {
-        /**
-         * @var TaskSocketInterface|null $socket
-         */
-        $socket = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket($serverId);
-        if (empty($socket)) {
-            return [];
-        }
-        try {
-            $socket->send(self::pack(Cmd::ConnOpenCustomUniqIdToken, ''));
-            $respData = $socket->receive();
-            if ($respData === '' || $respData === false) {
-                throw new SocketReceiveException('call Cmd::ConnOpenCustomUniqIdToken failed because the connection to the netsvr was disconnected');
-            }
-            $resp = new ConnOpenCustomUniqIdTokenResp();
-            $resp->mergeFromString(self::unpack($respData));
-            return [
-                'uniqId' => $resp->getUniqId(),
-                'token' => $resp->getToken(),
-            ];
-        } finally {
-            $socket->release();
-        }
-    }
-
     /**
      * 更新客户在网关存储的信息
      * @param ConnInfoUpdate $connInfoUpdate
@@ -117,7 +92,7 @@ class NetBus
      */
     public static function connInfoUpdate(ConnInfoUpdate $connInfoUpdate): void
     {
-        self::sendToSocketOfMainOrTaskByUniqId($connInfoUpdate->getUniqId(), Cmd::ConnInfoUpdate, $connInfoUpdate);
+        self::sendToSocketByUniqId($connInfoUpdate->getUniqId(), self::pack(Cmd::ConnInfoUpdate, $connInfoUpdate->serializeToString()));
     }
 
     /**
@@ -129,7 +104,7 @@ class NetBus
      */
     public static function connInfoDelete(ConnInfoDelete $connInfoDelete): void
     {
-        self::sendToSocketOfMainOrTaskByUniqId($connInfoDelete->getUniqId(), Cmd::ConnInfoDelete, $connInfoDelete);
+        self::sendToSocketByUniqId($connInfoDelete->getUniqId(), self::pack(Cmd::ConnInfoDelete, $connInfoDelete->serializeToString()));
     }
 
     /**
@@ -138,17 +113,16 @@ class NetBus
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
-     * @throws Throwable
      */
     public static function broadcast(string $data): void
     {
         $broadcast = new Broadcast();
         $broadcast->setData($data);
-        self::sendToSocketsOfMainOrTask(Cmd::Broadcast, $broadcast);
+        self::sendToSockets(self::pack(Cmd::Broadcast, $broadcast->serializeToString()));
     }
 
     /**
-     * 组播
+     * 按uniqId组播
      * @param array|string|string[] $uniqIds 目标客户的网关uniqId
      * @param string $data 需要发送的数据
      * @return void
@@ -163,20 +137,37 @@ class NetBus
             $multicast = new Multicast();
             $multicast->setUniqIds($uniqIds);
             $multicast->setData($data);
-            self::sendToSocketOfMainOrTaskByUniqId($uniqIds[0], Cmd::Multicast, $multicast);
+            self::sendToSocketByUniqId($uniqIds[array_key_last($uniqIds)], self::pack(Cmd::Multicast, $multicast->serializeToString()));
             return;
         }
         //对uniqId按所属网关进行分组
-        $serverGroup = self::uniqIdsGroupByServerId($uniqIds);
+        $group = self::getUniqIdsGroupByWorkerAddrAsHex($uniqIds);
         //循环发送给各个网关
-        foreach ($serverGroup as $serverId => $currentUniqIds) {
+        foreach ($group as $workerAddrAsHex => $currentUniqIds) {
             $multicast = (new Multicast())->setData($data)->setUniqIds($currentUniqIds);
-            self::sendToSocketOfMainOrTaskByServerId($serverId, Cmd::Multicast, $multicast);
+            self::sendToSocketByWorkerAddrAsHex($workerAddrAsHex, self::pack(Cmd::Multicast, $multicast->serializeToString()));
         }
     }
 
     /**
-     * 单播
+     * 按customerId组播
+     * @param array|string|string[] $customerIds 目标客户的customerId
+     * @param string $data 需要发送的数据
+     * @return void
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
+    public static function multicastByCustomerId(array|string|int $customerIds, string $data): void
+    {
+        $multicastByCustomerId = new MulticastByCustomerId();
+        $multicastByCustomerId->setCustomerIds((array)$customerIds);
+        $multicastByCustomerId->setData($data);
+        //因为不知道客户id在哪个网关，所以给所有网关发送
+        self::sendToSockets(self::pack(Cmd::MulticastByCustomerId, $multicastByCustomerId->serializeToString()));
+    }
+
+    /**
+     * 按uniqId单播
      * @param string $uniqId 目标客户的网关uniqId
      * @param string $data 需要发送的数据
      * @return void
@@ -188,15 +179,33 @@ class NetBus
         $singleCast = new SingleCast();
         $singleCast->setUniqId($uniqId);
         $singleCast->setData($data);
-        self::sendToSocketOfMainOrTaskByUniqId($uniqId, Cmd::SingleCast, $singleCast);
+        self::sendToSocketByUniqId($uniqId, self::pack(Cmd::SingleCast, $singleCast->serializeToString()));
     }
 
     /**
-     * 批量单播，一次性给多个用户发送不同的消息，或给一个用户发送多条消息
+     * 按customerId单播
+     * @param string|int $customerId 目标客户的customerId
+     * @param string $data 需要发送的数据
+     * @return void
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
+    public static function singleCastByCustomerId(string|int $customerId, string $data): void
+    {
+        $singleCastByCustomerId = new SingleCastByCustomerId();
+        $singleCastByCustomerId->setCustomerId((string)$customerId);
+        $singleCastByCustomerId->setData($data);
+        //因为不知道客户id在哪个网关，所以给所有网关发送
+        self::sendToSockets(self::pack(Cmd::SingleCastByCustomerId, $singleCastByCustomerId->serializeToString()));
+    }
+
+    /**
+     * 按uniqId批量单播，一次性给多个用户发送不同的消息，或给一个用户发送多条消息
      * @param array $params 入参示例如下：
      * ['目标uniqId1'=>'数据1', '目标uniqId2'=>'数据2']
      * ['uniqIds'=>['目标uniqId1', '目标uniqId2'], 'data'=>['数据1', '数据2']]
      * ['uniqIds'=>'目标uniqId1', 'data'=>['数据1', '数据2']]
+     * ['uniqIds'=>['目标uniqId1'], 'data'=>['数据1', '数据2']]
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
@@ -207,53 +216,82 @@ class NetBus
         if (self::isSinglePoint() ||
             //这种格式的入参：['目标uniqId1'=>'数据1']
             count($params) === 1 ||
-            //这种格式的入参：['uniqIds'=>'目标uniqId1', 'data'=>['数据1', '数据2']]，['uniqIds'=>['目标uniqId1'], 'data'=>['数据1', '数据2']]
+            //这种格式的入参：['uniqIds'=>'目标uniqId1', 'data'=>['数据1', '数据2']]
+            //或者是这种格式的入参：['uniqIds'=>['目标uniqId1'], 'data'=>['数据1', '数据2']]
             (isset($params['data']) && isset($params['uniqIds']) && (!is_array($params['uniqIds']) || count($params['uniqIds']) === 1))
         ) {
             $singleCastBulk = new SingleCastBulk();
             if (isset($params['uniqIds']) && isset($params['data'])) {
+                //这种格式的入参：['uniqIds'=>'目标uniqId1', 'data'=>['数据1', '数据2']]
+                //或者是这种格式的入参：['uniqIds'=>['目标uniqId1'], 'data'=>['数据1', '数据2']]
                 $uniqIds = (array)$params['uniqIds'];
                 $singleCastBulk->setUniqIds($uniqIds);
                 $singleCastBulk->setData((array)$params['data']);
             } else {
+                //这种格式的入参：['目标uniqId1'=>'数据1']
                 $uniqIds = array_keys($params);
                 $singleCastBulk->setUniqIds($uniqIds);
                 $singleCastBulk->setData(array_values($params));
             }
-            self::sendToSocketOfMainOrTaskByUniqId($uniqIds[0], Cmd::SingleCastBulk, $singleCastBulk);
+            self::sendToSocketByUniqId($uniqIds[array_key_last($uniqIds)], self::pack(Cmd::SingleCastBulk, $singleCastBulk->serializeToString()));
             return;
         }
-        //网关是多机器部署，需要迭代每一个uniqId，并根据所在网关进行分组，然后再迭代每一个组，并把数据发送到对应网关
-        /**
-         * @var ServerIdConvertInterface $serverIdConvert
-         */
-        $serverIdConvert = ApplicationContext::getContainer()->get(ServerIdConvertInterface::class);
+        //网关是多机器部署，需要迭代每一个uniqId，并根据所在网关进行分组，然后再迭代每一个组，将数据发送到对应网关
         $bulks = [];
         if (isset($params['uniqIds']) && isset($params['data'])) {
             //这种结构的入参：['uniqIds'=>['目标uniqId1', '目标uniqId2'], 'data'=>['数据1', '数据2']]
             $params['data'] = (array)$params['data'];
-            $serverIds = $serverIdConvert->bulk($params['uniqIds']);
             foreach ($params['uniqIds'] as $index => $uniqId) {
-                $serverId = $serverIds[$uniqId];
-                $bulks[$serverId]['uniqIds'][] = $uniqId;
-                $bulks[$serverId]['data'][] = $params['data'][$index];
+                $workerAddrAsHex = uniqIdConvertToWorkerAddrAsHex($uniqId);
+                $bulks[$workerAddrAsHex]['uniqIds'][] = $uniqId;
+                $bulks[$workerAddrAsHex]['data'][] = $params['data'][$index];
             }
         } else {
             //这种结构的入参：['目标uniqId1'=>'数据1', '目标uniqId2'=>'数据2']
-            $serverIds = $serverIdConvert->bulk(array_keys($params));
             foreach ($params as $uniqId => $data) {
-                $serverId = $serverIds[$uniqId];
-                $bulks[$serverId]['uniqIds'][] = $uniqId;
-                $bulks[$serverId]['data'][] = $data;
+                $workerAddrAsHex = uniqIdConvertToWorkerAddrAsHex($uniqId);
+                $bulks[$workerAddrAsHex]['uniqIds'][] = $uniqId;
+                $bulks[$workerAddrAsHex]['data'][] = $data;
             }
         }
         //分组完毕，循环发送到各个网关
-        foreach ($bulks as $serverId => $bulk) {
+        foreach ($bulks as $workerAddrAsHex => $bulk) {
             $singleCastBulk = new SingleCastBulk();
             $singleCastBulk->setUniqIds($bulk['uniqIds']);
             $singleCastBulk->setData($bulk['data']);
-            self::sendToSocketOfMainOrTaskByServerId($serverId, Cmd::SingleCastBulk, $singleCastBulk);
+            self::sendToSocketByWorkerAddrAsHex($workerAddrAsHex, self::pack(Cmd::SingleCastBulk, $singleCastBulk->serializeToString()));
         }
+    }
+
+    /**
+     * 按customerId批量单播，一次性给多个用户发送不同的消息，或给一个用户发送多条消息
+     * @param array $params 入参示例如下：
+     * ['customerIds'=>'目标customerId1', 'data'=>['数据1', '数据2']]
+     * ['customerIds'=>['目标customerId1'], 'data'=>['数据1', '数据2']]
+     * ['customerIds'=>['目标customerId1', '目标customerId2'], 'data'=>['数据1', '数据2']]
+     * ['目标customerId1'=>'数据1', '目标customerId2'=>'数据2']
+     * @return void
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
+    public static function singleCastBulkByCustomerId(array $params): void
+    {
+        $f = function (array $customerIds, array $data) {
+            $singleCastBulkByCustomerId = new SingleCastBulkByCustomerId();
+            $singleCastBulkByCustomerId->setCustomerIds($customerIds);
+            $singleCastBulkByCustomerId->setData($data);
+            //因为不知道客户id在哪个网关，所以给所有网关发送
+            self::sendToSockets(self::pack(Cmd::SingleCastBulkByCustomerId, $singleCastBulkByCustomerId->serializeToString()));
+        };
+        //入参格式1：['customerIds'=>'目标customerId1', 'data'=>['数据1', '数据2']]
+        //入参格式2：['customerIds'=>['目标customerId1'], 'data'=>['数据1', '数据2']]
+        //入参格式3：['customerIds'=>['目标customerId1', '目标customerId2'], 'data'=>['数据1', '数据2']]
+        if (isset($params['customerIds']) && isset($params['data'])) {
+            $f((array)$params['customerIds'], (array)$params['data']);
+            return;
+        }
+        //入参格式4：['目标customerId1'=>'数据1', '目标customerId2'=>'数据2']
+        $f(array_keys($params), array_values($params));
     }
 
     /**
@@ -271,7 +309,7 @@ class NetBus
         $topicSubscribe->setUniqId($uniqId);
         $topicSubscribe->setTopics((array)$topics);
         $topicSubscribe->setData($data);
-        self::sendToSocketOfMainOrTaskByUniqId($topicSubscribe->getUniqId(), Cmd::TopicSubscribe, $topicSubscribe);
+        self::sendToSocketByUniqId($topicSubscribe->getUniqId(), self::pack(Cmd::TopicSubscribe, $topicSubscribe->serializeToString()));
     }
 
     /**
@@ -289,7 +327,7 @@ class NetBus
         $topicUnsubscribe->setUniqId($uniqId);
         $topicUnsubscribe->setTopics((array)$topics);
         $topicUnsubscribe->setData($data);
-        self::sendToSocketOfMainOrTaskByUniqId($topicUnsubscribe->getUniqId(), Cmd::TopicUnsubscribe, $topicUnsubscribe);
+        self::sendToSocketByUniqId($topicUnsubscribe->getUniqId(), self::pack(Cmd::TopicUnsubscribe, $topicUnsubscribe->serializeToString()));
     }
 
     /**
@@ -299,30 +337,29 @@ class NetBus
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
-     * @throws Throwable
      */
     public static function topicDelete(array|string $topics, string $data = ''): void
     {
         $topicDelete = new TopicDelete();
         $topicDelete->setTopics((array)$topics);
         $topicDelete->setData($data);
-        self::sendToSocketsOfMainOrTask(Cmd::TopicDelete, $topicDelete);
+        self::sendToSockets(self::pack(Cmd::TopicDelete, $topicDelete->serializeToString()));
     }
 
     /**
+     * 发布
      * @param array|string|string[] $topics 需要发布数据的主题
      * @param string $data 需要发给客户的数据
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
-     * @throws Throwable
      */
     public static function topicPublish(array|string $topics, string $data): void
     {
         $topicPublish = new TopicPublish();
         $topicPublish->setTopics((array)$topics);
         $topicPublish->setData($data);
-        self::sendToSocketsOfMainOrTask(Cmd::TopicPublish, $topicPublish);
+        self::sendToSockets(self::pack(Cmd::TopicPublish, $topicPublish->serializeToString()));
     }
 
     /**
@@ -334,7 +371,6 @@ class NetBus
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
-     * @throws Throwable
      */
     public static function topicPublishBulk(array $params): void
     {
@@ -351,7 +387,7 @@ class NetBus
             $topicPublishBulk->setTopics(array_keys($params));
             $topicPublishBulk->setData(array_values($params));
         }
-        self::sendToSocketsOfMainOrTask(Cmd::TopicPublishBulk, $topicPublishBulk);
+        self::sendToSockets(self::pack(Cmd::TopicPublishBulk, $topicPublishBulk->serializeToString()));
     }
 
     /**
@@ -369,16 +405,33 @@ class NetBus
             $forceOffline = new ForceOffline();
             $forceOffline->setUniqIds($uniqIds);
             $forceOffline->setData($data);
-            self::sendToSocketOfMainOrTaskByUniqId($uniqIds[0], Cmd::ForceOffline, $forceOffline);
+            self::sendToSocketByUniqId($uniqIds[array_key_last($uniqIds)], self::pack(Cmd::ForceOffline, $forceOffline->serializeToString()));
             return;
         }
-        $serverGroup = self::uniqIdsGroupByServerId($uniqIds);
-        foreach ($serverGroup as $serverId => $currentUniqIds) {
+        $group = self::getUniqIdsGroupByWorkerAddrAsHex($uniqIds);
+        foreach ($group as $workerAddrAsHex => $currentUniqIds) {
             $forceOffline = new ForceOffline();
             $forceOffline->setUniqIds($currentUniqIds);
             $forceOffline->setData($data);
-            self::sendToSocketOfMainOrTaskByServerId($serverId, Cmd::ForceOffline, $forceOffline);
+            self::sendToSocketByWorkerAddrAsHex($workerAddrAsHex, self::pack(Cmd::ForceOffline, $forceOffline->serializeToString()));
         }
+    }
+
+    /**
+     * 强制关闭某几个customerId
+     * @param array|string|int|string[]|int[] $customerIds 需要强制下线的customerId
+     * @param string $data 下线操作前需要发给客户的信息
+     * @return void
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
+    public static function forceOfflineByCustomerId(array|string|int $customerIds, string $data = ''): void
+    {
+        $forceOfflineByCustomerId = new ForceOfflineByCustomerId();
+        $forceOfflineByCustomerId->setCustomerIds($customerIds);
+        $forceOfflineByCustomerId->setData($data);
+        //因为不知道客户id在哪个网关，所以给所有网关发送
+        self::sendToSockets(self::pack(Cmd::ForceOfflineByCustomerId, $forceOfflineByCustomerId->serializeToString()));
     }
 
     /**
@@ -398,16 +451,16 @@ class NetBus
             $forceOfflineGuest->setUniqIds($uniqIds);
             $forceOfflineGuest->setData($data);
             $forceOfflineGuest->setDelay($delay);
-            self::sendToSocketOfMainOrTaskByUniqId($uniqIds[0], Cmd::ForceOfflineGuest, $forceOfflineGuest);
+            self::sendToSocketByUniqId($uniqIds[array_key_last($uniqIds)], self::pack(Cmd::ForceOfflineGuest, $forceOfflineGuest->serializeToString()));
             return;
         }
-        $serverGroup = self::uniqIdsGroupByServerId($uniqIds);
-        foreach ($serverGroup as $serverId => $currentUniqIds) {
+        $group = self::getUniqIdsGroupByWorkerAddrAsHex($uniqIds);
+        foreach ($group as $workerAddrAsHex => $currentUniqIds) {
             $forceOfflineGuest = new ForceOfflineGuest();
             $forceOfflineGuest->setUniqIds($currentUniqIds);
             $forceOfflineGuest->setData($data);
             $forceOfflineGuest->setDelay($delay);
-            self::sendToSocketOfMainOrTaskByServerId($serverId, Cmd::ForceOfflineGuest, $forceOfflineGuest);
+            self::sendToSocketByWorkerAddrAsHex($workerAddrAsHex, self::pack(Cmd::ForceOfflineGuest, $forceOfflineGuest->serializeToString()));
         }
     }
 
@@ -424,14 +477,13 @@ class NetBus
         $uniqIds = (array)$uniqIds;
         //网关单点部署，或者是只有一个待检查的uniqId，则直接获取与网关的socket连接进行操作
         if (self::isSinglePoint() || count($uniqIds) == 1) {
-            $socket = self::getTaskSocketByUniqId($uniqIds[0]);
+            $socket = self::getSocketByUniqId($uniqIds[array_key_last($uniqIds)]);
             if (!$socket instanceof TaskSocketInterface) {
                 return [];
             }
-            $checkOnlineReq = (new CheckOnlineReq())->setUniqIds($uniqIds)->serializeToString();
-            $req = self::pack(Cmd::CheckOnline, $checkOnlineReq);
             try {
-                $socket->send($req);
+                $checkOnlineReq = (new CheckOnlineReq())->setUniqIds($uniqIds);
+                $socket->send(self::pack(Cmd::CheckOnline, $checkOnlineReq->serializeToString()));
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
                     throw new SocketReceiveException('call Cmd::CheckOnline failed because the connection to the netsvr was disconnected');
@@ -440,69 +492,39 @@ class NetBus
                 $resp->mergeFromString(self::unpack($respData));
                 return self::repeatedFieldToArray($resp->getUniqIds());
             } finally {
+                //释放连接给连接池
                 $socket->release();
             }
         }
         //网关是多机器部署的，先对uniqId按所属网关进行分组
-        $serverGroup = self::uniqIdsGroupByServerId($uniqIds);
-        if (empty($serverGroup)) {
+        $group = self::getUniqIdsGroupByWorkerAddrAsHex($uniqIds);
+        if (empty($group)) {
             return [];
         }
-        //再并发的向每个网关请求
-        $retCh = new Channel(count($serverGroup));
-        foreach ($serverGroup as $serverId => $currentUniqIds) {
-            Coroutine::create(function () use ($serverId, $currentUniqIds, $retCh) {
-                try {
-                    $socket = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket($serverId);
-                    if (!$socket instanceof TaskSocketInterface) {
-                        //无效的serverId，即使拿不到与之对应的网关socket连接，也push一个结果进channel，否则接下来的读取channel会被阻塞住
-                        $retCh->push(new CheckOnlineResp());
-                    } else {
-                        //拿到了severId对应的网关socket
-                        try {
-                            //构造请求参数
-                            $checkOnlineReq = (new CheckOnlineReq())->setUniqIds($currentUniqIds)->serializeToString();
-                            //构造路由
-                            $req = self::pack(Cmd::CheckOnline, $checkOnlineReq);
-                            //发送请求
-                            $socket->send($req);
-                            //接收响应
-                            $respData = $socket->receive();
-                            if ($respData === '' || $respData === false) {
-                                throw new SocketReceiveException('call Cmd::CheckOnline failed because the connection to the netsvr was disconnected');
-                            }
-                            //解析响应
-                            $resp = new CheckOnlineResp();
-                            $resp->mergeFromString(self::unpack($respData));
-                            //写入接收结果的channel
-                            $retCh->push($resp);
-                        } finally {
-                            //将socket连接归还给连接池
-                            $socket->release();
-                        }
-                    }
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                }
-            });
-        }
-        //从接收结果的channel中读取每个网关的返回结果
+        //再的向每个网关请求
         $ret = [];
-        try {
-            for ($i = count($serverGroup); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                //报错了，直接抛出异常
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                //响应了具体的在线的uniqId
-                if ($resp instanceof CheckOnlineResp) {
+        foreach ($group as $workerAddrAsHex => $currentUniqIds) {
+            $socket = self::getTaskSocketPoolManger()->getSocket($workerAddrAsHex);
+            if ($socket instanceof TaskSocketInterface) {
+                try {
+                    //构造请求参数
+                    $checkOnlineReq = (new CheckOnlineReq())->setUniqIds($currentUniqIds)->serializeToString();
+                    //发送请求
+                    $socket->send(self::pack(Cmd::CheckOnline, $checkOnlineReq));
+                    //接收响应
+                    $respData = $socket->receive();
+                    if ($respData === '' || $respData === false) {
+                        throw new SocketReceiveException('call Cmd::CheckOnline failed because the connection to the netsvr was disconnected');
+                    }
+                    //解析响应
+                    $resp = new CheckOnlineResp();
+                    $resp->mergeFromString(self::unpack($respData));
                     array_push($ret, ...self::repeatedFieldToArray($resp->getUniqIds()));
+                } finally {
+                    //释放连接给连接池
+                    $socket->release();
                 }
             }
-        } finally {
-            //这里一定要关闭掉这个channel，否则可能会导致，因为没有消费者了，还未返回结果的被协程阻塞住，从而出现协程泄漏的情况
-            $retCh->close();
         }
         return $ret;
     }
@@ -510,21 +532,15 @@ class NetBus
     /**
      * 获取网关中的uniqId
      * @return array[]
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
      * @throws Throwable
      */
     public static function uniqIdList(): array
     {
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
-        if (empty($sockets)) {
-            return [];
-        }
-        $req = self::pack(Cmd::UniqIdList, '');
-        //单机部署的网关，直接请求
-        if (count($sockets) === 1) {
-            try {
-                $socket = $sockets[0];
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::UniqIdList, '');
+            $ret = [];
+            foreach ($sockets as $socket) {
                 $socket->send($req);
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
@@ -532,79 +548,32 @@ class NetBus
                 }
                 $resp = new UniqIdListResp();
                 $resp->mergeFromString(self::unpack($respData));
-                return [[
-                    'serverId' => $resp->getServerId(),
+                $ret[] = [
+                    'workerAddr' => $socket->getWorkerAddr(),
                     'uniqIds' => self::repeatedFieldToArray($resp->getUniqIds()),
-                ]];
-            } finally {
-                /**
-                 * @var TaskSocketInterface $socket
-                 */
+                ];
+            }
+            return $ret;
+        } finally {
+            //释放连接给连接池
+            foreach ($sockets as $socket) {
                 $socket->release();
             }
         }
-        //多机器部署的网关，并发请求
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::UniqIdList failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new UniqIdListResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        //接收响应结果
-        $ret = [];
-        try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                if ($resp instanceof UniqIdListResp) {
-                    $ret[] = [
-                        'serverId' => $resp->getServerId(),
-                        'uniqIds' => self::repeatedFieldToArray($resp->getUniqIds()),
-                    ];
-                }
-            }
-        } finally {
-            $retCh->close();
-        }
-        return $ret;
     }
 
     /**
      * 统计网关的在线连接数
      * @return array[]
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
      * @throws Throwable
      */
     public static function uniqIdCount(): array
     {
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
-        if (empty($sockets)) {
-            return [];
-        }
-        $req = self::pack(Cmd::UniqIdCount, '');
-        //网关是单体架构部署的，直接请求
-        if (count($sockets) === 1) {
-            try {
-                $socket = $sockets[0];
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::UniqIdCount, '');
+            $ret = [];
+            foreach ($sockets as $socket) {
                 $socket->send($req);
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
@@ -612,79 +581,32 @@ class NetBus
                 }
                 $resp = new UniqIdCountResp();
                 $resp->mergeFromString(self::unpack($respData));
-                return [[
-                    'serverId' => $resp->getServerId(),
+                $ret[] = [
+                    'workerAddr' => $socket->getWorkerAddr(),
                     'count' => $resp->getCount(),
-                ]];
-            } finally {
-                /**
-                 * @var TaskSocketInterface $socket
-                 */
+                ];
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
                 $socket->release();
             }
         }
-        //网关是多机器部署的，并发请求
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::UniqIdCount failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new UniqIdCountResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        //接收结果
-        $ret = [];
-        try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                if ($resp instanceof UniqIdCountResp) {
-                    $ret[] = [
-                        'serverId' => $resp->getServerId(),
-                        'count' => $resp->getCount(),
-                    ];
-                }
-            }
-        } finally {
-            $retCh->close();
-        }
-        return $ret;
     }
 
     /**
      * 统计网关的主题数量
      * @return array[]
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
      * @throws Throwable
      */
     public static function topicCount(): array
     {
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
-        if (empty($sockets)) {
-            return [];
-        }
-        $req = self::pack(Cmd::TopicCount, '');
-        //直接请求单个网关
-        if (count($sockets) === 1) {
-            try {
-                $socket = $sockets[0];
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::TopicCount, '');
+            $ret = [];
+            foreach ($sockets as $socket) {
                 $socket->send($req);
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
@@ -692,79 +614,32 @@ class NetBus
                 }
                 $resp = new TopicCountResp();
                 $resp->mergeFromString(self::unpack($respData));
-                return [[
-                    'serverId' => $resp->getServerId(),
+                $ret[] = [
+                    'workerAddr' => $socket->getWorkerAddr(),
                     'count' => $resp->getCount(),
-                ]];
-            } finally {
-                /**
-                 * @var TaskSocketInterface $socket
-                 */
+                ];
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
                 $socket->release();
             }
         }
-        //并发请求多个网关
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::TopicCount failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new TopicCountResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        //接收响应
-        $ret = [];
-        try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                if ($resp instanceof TopicCountResp) {
-                    $ret[] = [
-                        'serverId' => $resp->getServerId(),
-                        'count' => $resp->getCount(),
-                    ];
-                }
-            }
-        } finally {
-            $retCh->close();
-        }
-        return $ret;
     }
 
     /**
      * 获取网关的全部主题
      * @return array[]
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
      * @throws Throwable
      */
     public static function topicList(): array
     {
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
-        if (empty($sockets)) {
-            return [];
-        }
-        $req = self::pack(Cmd::TopicList, '');
-        //直接请求单个网关
-        if (count($sockets) === 1) {
-            try {
-                $socket = $sockets[0];
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::TopicList, '');
+            $ret = [];
+            foreach ($sockets as $socket) {
                 $socket->send($req);
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
@@ -772,81 +647,33 @@ class NetBus
                 }
                 $resp = new TopicListResp();
                 $resp->mergeFromString(self::unpack($respData));
-                return [[
-                    'serverId' => $resp->getServerId(),
+                $ret[] = [
+                    'workerAddr' => $socket->getWorkerAddr(),
                     'topics' => self::repeatedFieldToArray($resp->getTopics()),
-                ]];
-            } finally {
-                /**
-                 * @var TaskSocketInterface $socket
-                 */
+                ];
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
                 $socket->release();
             }
         }
-        //并发请求多个网关
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::TopicList failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new TopicListResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        //接收响应
-        $ret = [];
-        try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                if ($resp instanceof TopicListResp) {
-                    $ret[] = [
-                        'serverId' => $resp->getServerId(),
-                        'topics' => self::repeatedFieldToArray($resp->getTopics()),
-                    ];
-                }
-            }
-        } finally {
-            $retCh->close();
-        }
-        return $ret;
     }
 
     /**
      * 获取网关中某几个主题包含的uniqId
      * @param array|string|string[] $topics
      * @return array[] 注意一个uniqId可能订阅了多个主题
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
      * @throws Throwable
      */
     public static function topicUniqIdList(array|string $topics): array
     {
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
-        if (empty($sockets)) {
-            return [];
-        }
-        $topicUniqIdListReq = (new TopicUniqIdListReq())->setTopics((array)$topics)->serializeToString();
-        $req = self::pack(Cmd::TopicUniqIdList, $topicUniqIdListReq);
-        //网关是单机部署的，直接请求
-        if (count($sockets) === 1) {
-            try {
-                $socket = $sockets[0];
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::TopicUniqIdList, (new TopicUniqIdListReq())->setTopics((array)$topics)->serializeToString());
+            $ret = [];
+            foreach ($sockets as $socket) {
                 $socket->send($req);
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
@@ -854,75 +681,28 @@ class NetBus
                 }
                 $resp = new TopicUniqIdListResp();
                 $resp->mergeFromString(self::unpack($respData));
-                $ret = [];
-                foreach ($resp->getItems() as $topic => $uniqIds) {
+                $items = [
+                    'workerAddr' => $socket->getWorkerAddr(),
+                    'items' => [],
+                ];
+                foreach ($resp->getItems() as $topic => $item) {
                     /**
-                     * @var TopicUniqIdListRespItem $uniqIds
+                     * @var $item TopicUniqIdListRespItem
                      */
-                    $ret[] = [
+                    $items['items'][] = [
                         'topic' => $topic,
-                        'uniqIds' => self::repeatedFieldToArray($uniqIds->getUniqIds()),
+                        'uniqIds' => self::repeatedFieldToArray($item->getUniqIds()),
                     ];
                 }
-                return $ret;
-            } finally {
-                /**
-                 * @var TaskSocketInterface $socket
-                 */
+                $ret[] = $items;
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
                 $socket->release();
             }
         }
-        //网关是多机器部署的，并发请求每个网关机器
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::TopicUniqIdList failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new TopicUniqIdListResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        //接收结果
-        $ret = [];
-        try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                if ($resp instanceof TopicUniqIdListResp) {
-                    foreach ($resp->getItems() as $topic => $uniqIds) {
-                        /**
-                         * @var TopicUniqIdListRespItem $uniqIds
-                         */
-                        if (isset($ret[$topic])) {
-                            array_push($ret[$topic]['uniqIds'], ...self::repeatedFieldToArray($uniqIds->getUniqIds()));
-                        } else {
-                            $ret[$topic] = [
-                                'topic' => $topic,
-                                'uniqIds' => self::repeatedFieldToArray($uniqIds->getUniqIds()),
-                            ];
-                        }
-                    }
-                }
-            }
-        } finally {
-            $retCh->close();
-        }
-        return array_values($ret);
     }
 
     /**
@@ -930,21 +710,15 @@ class NetBus
      * @param array|string|string[] $topics 需要统计连接数的主题
      * @param bool $allTopic 是否统计全部主题的连接数
      * @return array[]
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
      * @throws Throwable
      */
     public static function topicUniqIdCount(array|string $topics, bool $allTopic = false): array
     {
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
-        if (empty($sockets)) {
-            return [];
-        }
-        $topicUniqIdCountReq = (new TopicUniqIdCountReq())->setTopics((array)$topics)->setCountAll($allTopic)->serializeToString();
-        $req = self::pack(Cmd::TopicUniqIdCount, $topicUniqIdCountReq);
-        if (count($sockets) === 1) {
-            try {
-                $socket = $sockets[0];
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::TopicUniqIdCount, (new TopicUniqIdCountReq())->setTopics((array)$topics)->setCountAll($allTopic)->serializeToString());
+            $ret = [];
+            foreach ($sockets as $socket) {
                 $socket->send($req);
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
@@ -952,88 +726,141 @@ class NetBus
                 }
                 $resp = new TopicUniqIdCountResp();
                 $resp->mergeFromString(self::unpack($respData));
-                $ret = [];
-                foreach ($resp->getItems() as $currentTopic => $count) {
-                    $ret[] = [
-                        'topic' => $currentTopic,
+                $items = [
+                    'workerAddr' => $socket->getWorkerAddr(),
+                    'items' => [],
+                ];
+                foreach ($resp->getItems() as $topic => $count) {
+                    $items['items'][] = [
+                        'topic' => $topic,
                         'count' => $count,
                     ];
                 }
-                return $ret;
-            } finally {
-                /**
-                 * @var TaskSocketInterface $socket
-                 */
+                $ret[] = $items;
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
                 $socket->release();
             }
         }
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::TopicUniqIdCount failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new TopicUniqIdCountResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        $ret = [];
+    }
+
+    /**
+     * 获取网关中某几个主题包含的customerId
+     * @param array|string|string[] $topics
+     * @return array[] 注意一个uniqId可能订阅了多个主题
+     * @throws Throwable
+     */
+    public static function topicCustomerIdList(array|string $topics): array
+    {
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
         try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
+            $req = self::pack(Cmd::TopicCustomerIdList, (new TopicCustomerIdListReq())->setTopics((array)$topics)->serializeToString());
+            $ret = [];
+            foreach ($sockets as $socket) {
+                $socket->send($req);
+                $respData = $socket->receive();
+                if ($respData === '' || $respData === false) {
+                    throw new SocketReceiveException('call Cmd::TopicCustomerIdList failed because the connection to the netsvr was disconnected');
                 }
-                if ($resp instanceof TopicUniqIdCountResp) {
-                    foreach ($resp->getItems() as $currentTopic => $count) {
-                        if (!isset($ret[$currentTopic])) {
-                            $ret[$currentTopic] = [
-                                'topic' => $currentTopic,
-                                'count' => $count,
-                            ];
-                            continue;
-                        }
-                        $ret[$currentTopic]['count'] += $count;
-                    }
+                $resp = new TopicCustomerIdListResp();
+                $resp->mergeFromString(self::unpack($respData));
+                $items = [
+                    'workerAddr' => $socket->getWorkerAddr(),
+                    'items' => [],
+                ];
+                foreach ($resp->getItems() as $topic => $item) {
+                    /**
+                     * @var $item TopicCustomerIdListRespItem
+                     */
+                    $items['items'][] = [
+                        'topic' => $topic,
+                        'customerIds' => self::repeatedFieldToArray($item->getCustomerIds()),
+                    ];
                 }
+                $ret[] = $items;
             }
+            return $ret;
         } finally {
-            $retCh->close();
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
+                $socket->release();
+            }
         }
-        return array_values($ret);
+    }
+
+    /**
+     * 统计网关中某几个主题包含的customerId数量
+     * @param array|string|string[] $topics 需要统计连接数的主题
+     * @param bool $allTopic 是否统计全部主题的customerId数量
+     * @return array[]
+     * @throws Throwable
+     */
+    public static function topicCustomerIdCount(array|string $topics, bool $allTopic = false): array
+    {
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::TopicCustomerIdCount, (new TopicCustomerIdCountReq())->setTopics((array)$topics)->setCountAll($allTopic)->serializeToString());
+            $ret = [];
+            foreach ($sockets as $socket) {
+                $socket->send($req);
+                $respData = $socket->receive();
+                if ($respData === '' || $respData === false) {
+                    throw new SocketReceiveException('call Cmd::TopicCustomerIdCount failed because the connection to the netsvr was disconnected');
+                }
+                $resp = new TopicCustomerIdCountResp();
+                $resp->mergeFromString(self::unpack($respData));
+                $items = [
+                    'workerAddr' => $socket->getWorkerAddr(),
+                    'items' => [],
+                ];
+                foreach ($resp->getItems() as $topic => $count) {
+                    $items['items'][] = [
+                        'topic' => $topic,
+                        'count' => $count,
+                    ];
+                }
+                $ret[] = $items;
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
+                $socket->release();
+            }
+        }
     }
 
     /**
      * 获取目标uniqId在网关中存储的信息
-     * @param array|string|string[] $uniqIds
-     * @return array[]
+     * @param array|string $uniqIds
+     * @param bool $reqCustomerId 是否请求customerId
+     * @param bool $reqSession 是否请求session
+     * @param bool $reqTopic 是否请求topic
+     * @return array[] key是uniqId，value是uniqId对应的连接信息
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
-     * @throws Throwable
+     * @throws Exception
      */
-    public static function connInfo(array|string $uniqIds): array
+    public static function connInfo(array|string $uniqIds, bool $reqCustomerId = true, bool $reqSession = true, bool $reqTopic = true): array
     {
         $uniqIds = (array)$uniqIds;
+        $f = function ($uniqIds) use ($reqCustomerId, $reqSession, $reqTopic): string {
+            $connInfoReq = (new ConnInfoReq())->setUniqIds($uniqIds);
+            $connInfoReq->setReqCustomerId($reqCustomerId);
+            $connInfoReq->setReqSession($reqSession);
+            $connInfoReq->setReqTopic($reqTopic);
+            return $connInfoReq->serializeToString();
+        };
         if (self::isSinglePoint() || count($uniqIds) == 1) {
-            $socket = self::getTaskSocketByUniqId($uniqIds[0]);
+            $socket = self::getSocketByUniqId($uniqIds[array_key_last($uniqIds)]);
             if (!$socket instanceof TaskSocketInterface) {
                 return [];
             }
-            $connInfoReq = (new ConnInfoReq())->setUniqIds($uniqIds)->serializeToString();
-            $req = self::pack(Cmd::ConnInfo, $connInfoReq);
             try {
+                $req = self::pack(Cmd::ConnInfo, $f($uniqIds));
                 $socket->send($req);
                 $respData = $socket->receive();
                 if ($respData === '' || $respData === false) {
@@ -1042,77 +869,119 @@ class NetBus
                 $resp = new ConnInfoResp();
                 $resp->mergeFromString(self::unpack($respData));
                 $ret = [];
-                foreach ($resp->getItems() as $currentUniqId => $info) {
+                foreach ($resp->getItems() as $uniqId => $item) {
                     /**
-                     * @var ConnInfoRespItem $info
+                     * @var $item ConnInfoRespItem
                      */
-                    $ret[] = [
-                        'uniqId' => $currentUniqId,
-                        'topics' => self::repeatedFieldToArray($info->getTopics()),
-                        'session' => $info->getSession(),
+                    $ret[$uniqId] = [
+                        'customerId' => $item->getCustomerId(),
+                        'session' => $item->getSession(),
+                        'topics' => self::repeatedFieldToArray($item->getTopics()),
                     ];
                 }
                 return $ret;
             } finally {
+                //释放连接给连接池
                 $socket->release();
             }
         }
-        $serverGroup = self::uniqIdsGroupByServerId($uniqIds);
-        if (empty($serverGroup)) {
+        $group = self::getUniqIdsGroupByWorkerAddrAsHex($uniqIds);
+        if (empty($group)) {
             return [];
         }
-        $retCh = new Channel(count($serverGroup));
-        foreach ($serverGroup as $serverId => $currentUniqIds) {
-            Coroutine::create(function () use ($serverId, $currentUniqIds, $retCh) {
-                try {
-                    $socket = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket($serverId);
-                    if (!$socket instanceof TaskSocketInterface) {
-                        $retCh->push(new ConnInfoResp());
-                    } else {
-                        try {
-                            $connInfoReq = (new ConnInfoReq())->setUniqIds($currentUniqIds)->serializeToString();
-                            $req = self::pack(Cmd::ConnInfo, $connInfoReq);
-                            $socket->send($req);
-                            $respData = $socket->receive();
-                            if ($respData === '' || $respData === false) {
-                                throw new SocketReceiveException('call Cmd::ConnInfo failed because the connection to the netsvr was disconnected');
-                            }
-                            $resp = new ConnInfoResp();
-                            $resp->mergeFromString(self::unpack($respData));
-                            $retCh->push($resp);
-                        } finally {
-                            $socket->release();
-                        }
-                    }
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                }
-            });
-        }
         $ret = [];
-        try {
-            for ($i = count($serverGroup); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                if ($resp instanceof ConnInfoResp) {
-                    foreach ($resp->getItems() as $currentUniqId => $info) {
+        foreach ($group as $workerAddrAsHex => $currentUniqIds) {
+            /**
+             * @var $socket TaskSocketInterface
+             */
+            $socket = self::getTaskSocketPoolManger()->getSocket($workerAddrAsHex);
+            if ($socket instanceof TaskSocketInterface) {
+                try {
+                    $req = self::pack(Cmd::ConnInfo, $f($currentUniqIds));
+                    $socket->send($req);
+                    $respData = $socket->receive();
+                    if ($respData === '' || $respData === false) {
+                        throw new SocketReceiveException('call Cmd::ConnInfo failed because the connection to the netsvr was disconnected');
+                    }
+                    $resp = new ConnInfoResp();
+                    $resp->mergeFromString(self::unpack($respData));
+                    foreach ($resp->getItems() as $uniqId => $item) {
                         /**
-                         * @var ConnInfoRespItem $info
+                         * @var $item ConnInfoRespItem
                          */
-                        $ret[] = [
-                            'uniqId' => $currentUniqId,
-                            'topics' => self::repeatedFieldToArray($info->getTopics()),
-                            'session' => $info->getSession(),
+                        $ret[$uniqId] = [
+                            'customerId' => $item->getCustomerId(),
+                            'session' => $item->getSession(),
+                            'topics' => self::repeatedFieldToArray($item->getTopics()),
                         ];
                     }
+                } finally {
+                    //释放连接给连接池
+                    $socket->release();
                 }
             }
-        } finally {
-            $retCh->close();
         }
         return $ret;
+    }
+
+    /**
+     * 获取目标customerId在网关中存储的信息
+     * @param array|string $customerIds
+     * @param bool $reqUniqId 是否请求uniqId
+     * @param bool $reqSession 是否请求session
+     * @param bool $reqTopic 是否请求topic
+     * @return array[] key是customerId，value是customerId对应的多个连接信息
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     * @throws Exception
+     */
+    public static function connInfoByCustomerId(array|string $customerIds, bool $reqUniqId = true, bool $reqSession = true, bool $reqTopic = true): array
+    {
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        if (empty($sockets)) {
+            return [];
+        }
+        try {
+            $connInfoByCustomerIdReq = (new ConnInfoByCustomerIdReq())->setCustomerIds((array)$customerIds);
+            $connInfoByCustomerIdReq->setReqUniqId($reqUniqId);
+            $connInfoByCustomerIdReq->setReqSession($reqSession);
+            $connInfoByCustomerIdReq->setReqTopic($reqTopic);
+            $req = self::pack(Cmd::ConnInfoByCustomerId, $connInfoByCustomerIdReq->serializeToString());
+            $ret = [];
+            //因为不知道客户id在哪个网关，所以给所有网关发送
+            foreach ($sockets as $socket) {
+                $socket->send($req);
+                $respData = $socket->receive();
+                if ($respData === '' || $respData === false) {
+                    throw new SocketReceiveException('call Cmd::ConnInfoByCustomerId failed because the connection to the netsvr was disconnected');
+                }
+                $resp = new connInfoByCustomerIdResp();
+                $resp->mergeFromString(self::unpack($respData));
+                foreach ($resp->getItems() as $customerId => $info) {
+                    /**
+                     * @var $info ConnInfoByCustomerIdRespItems
+                     */
+                    $items = [];
+                    foreach ($info->getItems() as $item) {
+                        /**
+                         * @var $item ConnInfoByCustomerIdRespItem
+                         */
+                        $items[] = [
+                            'uniqId' => $item->getUniqId(),
+                            'session' => $item->getSession(),
+                            'topics' => self::repeatedFieldToArray($item->getTopics()),
+                        ];
+                    }
+                    $ret[$customerId] = $items;
+                }
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
+                $socket->release();
+            }
+        }
     }
 
     /**
@@ -1124,95 +993,82 @@ class NetBus
      */
     public static function metrics(int $precision = 3): array
     {
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
         if (empty($sockets)) {
             return [];
         }
-        $req = self::pack(Cmd::Metrics, '');
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::Metrics failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new MetricsResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        $ret = [];
         try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
+            $req = self::pack(Cmd::Metrics, '');
+            $ret = [];
+            foreach ($sockets as $socket) {
+                $socket->send($req);
+                $respData = $socket->receive();
+                if ($respData === '' || $respData === false) {
+                    throw new SocketReceiveException('call Cmd::Metrics failed because the connection to the netsvr was disconnected');
                 }
-                if ($resp instanceof MetricsResp) {
-                    foreach ($resp->getItems() as $metricsItem => $metricsValue) {
-                        /**
-                         * @var MetricsRespItem $metricsValue
-                         */
-                        $ret[] = [
-                            //网关服务的severId
-                            'serverId' => $resp->getServerId(),
-                            //统计的服务状态项，具体含义请移步：https://github.com/buexplain/netsvr/blob/main/internal/metrics/metrics.go
-                            'item' => $metricsItem,
-                            //总数
-                            'count' => $metricsValue->getCount(),
-                            //每秒速率
-                            'meanRate' => round($metricsValue->getMeanRate(), $precision),
-                            //每秒速率的最大值
-                            'meanRateMax' => round($metricsValue->getMeanRateMax(), $precision),
-                            //每1分钟速率
-                            'rate1' => round($metricsValue->getRate1(), $precision),
-                            //每1分钟速率的最大值
-                            'rate1Max' => round($metricsValue->getRate1Max(), $precision),
-                            //每5分钟速率
-                            'rate5' => round($metricsValue->getRate5(), $precision),
-                            //每5分钟速率的最大值
-                            'rate5Max' => round($metricsValue->getRate5Max(), $precision),
-                            //每15分钟速率
-                            'rate15' => round($metricsValue->getRate15(), $precision),
-                            //每15分钟速率的最大值
-                            'rate15Max' => round($metricsValue->getRate15Max(), $precision),
-                        ];
-                    }
+                $resp = new MetricsResp();
+                $resp->mergeFromString(self::unpack($respData));
+                foreach ($resp->getItems() as $metricsValue) {
+                    /**
+                     * @var $metricsValue MetricsRespItem
+                     */
+                    $ret[] = [
+                        //网关服务的severId
+                        'workerAddr' => $socket->getWorkerAddr(),
+                        //统计的服务状态项，具体含义请移步：https://github.com/buexplain/netsvr/blob/main/internal/metrics/metrics.go
+                        'item' => $metricsValue->getItem(),
+                        //总数
+                        'count' => $metricsValue->getCount(),
+                        //每秒速率
+                        'meanRate' => round($metricsValue->getMeanRate(), $precision),
+                        //每秒速率的最大值
+                        'meanRateMax' => round($metricsValue->getMeanRateMax(), $precision),
+                        //每1分钟速率
+                        'rate1' => round($metricsValue->getRate1(), $precision),
+                        //每1分钟速率的最大值
+                        'rate1Max' => round($metricsValue->getRate1Max(), $precision),
+                        //每5分钟速率
+                        'rate5' => round($metricsValue->getRate5(), $precision),
+                        //每5分钟速率的最大值
+                        'rate5Max' => round($metricsValue->getRate5Max(), $precision),
+                        //每15分钟速率
+                        'rate15' => round($metricsValue->getRate15(), $precision),
+                        //每15分钟速率的最大值
+                        'rate15Max' => round($metricsValue->getRate15Max(), $precision),
+                    ];
                 }
             }
+            return $ret;
         } finally {
-            $retCh->close();
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
+                $socket->release();
+            }
         }
-        return $ret;
     }
 
     /**
      * 设置或读取网关针对business的每秒转发数量的限制的配置
      * @param LimitReq|null $limitReq
-     * @param int $serverId 需要变更的目标网关，如果是-1则表示与所有网关进行交互
+     * @param string $workerAddr
      * @return array[]
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
-     * @throws Throwable
+     * @throws Exception
      */
-    public static function limit(LimitReq $limitReq = null, int $serverId = -1): array
+    public static function limit(LimitReq $limitReq = null, string $workerAddr = ''): array
     {
-        if ($serverId === -1) {
-            $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
+        if ($workerAddr === '') {
+            $workerAddrAsHex = '';
         } else {
-            $resp = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket($serverId);
-            if (!empty($resp)) {
-                $sockets = [$resp];
+            $workerAddrAsHex = workerAddrConvertToHex($workerAddr);
+        }
+        if ($workerAddrAsHex === '') {
+            $sockets = self::getTaskSocketPoolManger()->getSockets();
+        } else {
+            $socket = self::getTaskSocketPoolManger()->getSocket($workerAddrAsHex);
+            if (!empty($socket)) {
+                $sockets = [$socket];
             } else {
                 $sockets = [];
             }
@@ -1220,74 +1076,110 @@ class NetBus
         if (empty($sockets)) {
             return [];
         }
-        if ($limitReq === null) {
-            $limitReq = new LimitReq();
-        }
-        $req = self::pack(Cmd::Limit, $limitReq->serializeToString());
-        $retCh = new Channel(count($sockets));
-        foreach ($sockets as $socket) {
-            Coroutine::create(function () use ($socket, $req, $retCh) {
-                try {
-                    $socket->send($req);
-                    $respData = $socket->receive();
-                    if ($respData === '' || $respData === false) {
-                        throw new SocketReceiveException('call Cmd::Limit failed because the connection to the netsvr was disconnected');
-                    }
-                    $resp = new LimitResp();
-                    $resp->mergeFromString(self::unpack($respData));
-                    $retCh->push($resp);
-                } catch (Throwable $throwable) {
-                    $retCh->push($throwable);
-                } finally {
-                    /**
-                     * @var TaskSocketInterface $socket
-                     */
-                    $socket->release();
-                }
-            });
-        }
-        $ret = [];
         try {
-            for ($i = count($sockets); $i > 0; $i--) {
-                $resp = $retCh->pop();
-                if ($resp instanceof Throwable) {
-                    throw $resp;
-                }
-                if ($resp instanceof LimitResp) {
-                    foreach ($resp->getItems() as $item) {
-                        /**
-                         * @var LimitRespItem $item
-                         */
-                        $ret[] = [
-                            //网关服务的severId
-                            'serverId' => $resp->getServerId(),
-                            //限流器的名字
-                            'name' => $item->getName(),
-                            //使用该限流器的workerId，就是business向网关发起注册的时候填写的workerId
-                            'workerIds' => self::repeatedFieldToArray($item->getWorkerIds()),
-                            //当前这些workerId每秒最多接收到的网关转发数据次数，注意是这些workerId的每秒接收次数，不是单个workerId的每秒接收次数
-                            'concurrency' => $item->getConcurrency(),
-                        ];
-                    }
-                }
+            if ($limitReq === null) {
+                $limitReq = new LimitReq();
             }
+            $req = self::pack(Cmd::Limit, $limitReq->serializeToString());
+            $ret = [];
+            foreach ($sockets as $socket) {
+                $socket->send($req);
+                $respData = $socket->receive();
+                if ($respData === '' || $respData === false) {
+                    throw new SocketReceiveException('call Cmd::Limit failed because the connection to the netsvr was disconnected');
+                }
+                $resp = new LimitResp();
+                $resp->mergeFromString(self::unpack($respData));
+                $ret[] = [
+                    'workerAddr' => $socket->getWorkerAddr(),
+                    'onMessage' => $resp->getOnMessage(),
+                    'onOpen' => $resp->getOnOpen(),
+                ];
+            }
+            return $ret;
         } finally {
-            $retCh->close();
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
+                $socket->release();
+            }
         }
-        return $ret;
     }
 
     /**
-     * @param int $cmd
-     * @param Message $message
+     * @throws Exception
+     */
+    public static function customerIdList(): array
+    {
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::CustomerIdList, '');
+            $ret = [];
+            foreach ($sockets as $socket) {
+                $socket->send($req);
+                $respData = $socket->receive();
+                if ($respData === '' || $respData === false) {
+                    throw new SocketReceiveException('call Cmd::CustomerIdList failed because the connection to the netsvr was disconnected');
+                }
+                $resp = new CustomerIdListResp();
+                $resp->mergeFromString(self::unpack($respData));
+                $ret[] = [
+                    'workerAddr' => $socket->getWorkerAddr(),
+                    'customerIds' => self::repeatedFieldToArray($resp->getCustomerIds()),
+                ];
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
+                $socket->release();
+            }
+        }
+    }
+
+    /**
+     * 统计网关的在线客户数
+     * 注意各个网关的客户数之和不一定等于总在线客户数，因为可能一个客户有多个设备连接到不同网关
+     * @return array[]
+     * @throws Throwable
+     */
+    public static function customerIdCount(): array
+    {
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
+        try {
+            $req = self::pack(Cmd::CustomerIdCount, '');
+            $ret = [];
+            foreach ($sockets as $socket) {
+                $socket->send($req);
+                $respData = $socket->receive();
+                if ($respData === '' || $respData === false) {
+                    throw new SocketReceiveException('call Cmd::CustomerIdCount failed because the connection to the netsvr was disconnected');
+                }
+                $resp = new CustomerIdCountResp();
+                $resp->mergeFromString(self::unpack($respData));
+                $ret[] = [
+                    'workerAddr' => $socket->getWorkerAddr(),
+                    'count' => $resp->getCount(),
+                ];
+            }
+            return $ret;
+        } finally {
+            foreach ($sockets as $socket) {
+                //释放连接给连接池
+                $socket->release();
+            }
+        }
+    }
+
+    /**
+     * 给所有网关服务发送数据
+     * @param string $data
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    protected static function sendToSocketsOfMainOrTask(int $cmd, Message $message): void
+    protected static function sendToSockets(string $data): void
     {
-        $data = self::pack($cmd, $message->serializeToString());
-        //优先通过mainSocket发送
+        //优先用mainSocket发送，因为mainSocket是异步发送的，而且网关可以为mainSocket开启多条协程处理这些信息
         $sockets = Common::$container->get(MainSocketManagerInterface::class)->getSockets();
         if (!empty($sockets)) {
             foreach ($sockets as $socket) {
@@ -1302,12 +1194,13 @@ class NetBus
         /**
          * @var TaskSocketInterface[] $sockets
          */
-        $sockets = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSockets();
+        $sockets = self::getTaskSocketPoolManger()->getSockets();
         //如果是单机部署的网关，则直接发送，不必走下面的多协程并发发送的逻辑
         if (count($sockets) === 1) {
             try {
                 $sockets[0]->send($data);
             } finally {
+                //释放连接给连接池
                 $sockets[0]->release();
             }
             return;
@@ -1319,6 +1212,7 @@ class NetBus
                     $socket->send($data);
                 } catch (Throwable) {
                 } finally {
+                    //释放连接给连接池
                     $socket->release();
                 }
             });
@@ -1326,52 +1220,69 @@ class NetBus
     }
 
     /**
+     * 向uniqId对应的网关服务发送数据
      * @param string $uniqId
-     * @param int $cmd
-     * @param Message $message
+     * @param string $data
      * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    protected static function sendToSocketOfMainOrTaskByUniqId(string $uniqId, int $cmd, Message $message): void
+    protected static function sendToSocketByUniqId(string $uniqId, string $data): void
     {
-        $serverId = Common::$container->get(ServerIdConvertInterface::class)->single($uniqId);
-        self::sendToSocketOfMainOrTaskByServerId($serverId, $cmd, $message);
-    }
-
-    /**
-     * @param int $serverId
-     * @param int $cmd
-     * @param Message $message
-     * @return void
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
-     */
-    protected static function sendToSocketOfMainOrTaskByServerId(int $serverId, int $cmd, Message $message): void
-    {
-        $socket = Common::$container->get(MainSocketManagerInterface::class)->getSocket($serverId);
+        //优先用mainSocket发送，因为mainSocket是异步发送的，而且网关可以为mainSocket开启多条协程处理这些信息
+        $socket = Common::$container->get(MainSocketManagerInterface::class)->getSocket(uniqIdConvertToWorkerAddrAsHex($uniqId));
         if ($socket instanceof MainSocketInterface) {
-            $socket->send(self::pack($cmd, $message->serializeToString()));
+            $socket->send($data);
             return;
         }
-        $socket = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket($serverId);
+        //如果mainSocket不存在，再通过taskSocket发送
+        $socket = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket(uniqIdConvertToWorkerAddrAsHex($uniqId));
         if ($socket instanceof TaskSocketInterface) {
             try {
-                $socket->send(self::pack($cmd, $message->serializeToString()));
+                $socket->send($data);
             } finally {
+                //释放连接给连接池
                 $socket->release();
             }
         }
     }
 
     /**
+     * 向workerAddr对应的网关服务发送数据
+     * @param string $workerAddrAsHex
+     * @param string $data
+     * @return void
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      */
-    protected static function getTaskSocketByUniqId(string $uniqId): ?TaskSocketInterface
+    protected static function sendToSocketByWorkerAddrAsHex(string $workerAddrAsHex, string $data): void
     {
-        $serverId = Common::$container->get(ServerIdConvertInterface::class)->single($uniqId);
-        return Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket($serverId);
+        //优先用mainSocket发送，因为mainSocket是异步发送的，而且网关可以为mainSocket开启多条协程处理这些信息
+        $socket = Common::$container->get(MainSocketManagerInterface::class)->getSocket($workerAddrAsHex);
+        if ($socket instanceof MainSocketInterface) {
+            $socket->send($data);
+            return;
+        }
+        //如果mainSocket不存在，再通过taskSocket发送
+        $socket = Common::$container->get(TaskSocketPoolMangerInterface::class)->getSocket($workerAddrAsHex);
+        if ($socket instanceof TaskSocketInterface) {
+            try {
+                $socket->send($data);
+            } finally {
+                //释放连接给连接池
+                $socket->release();
+            }
+        }
+    }
+
+    /**
+     * 根据uniqId获取其所在的网关的socket
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
+    protected static function getSocketByUniqId(string $uniqId): ?TaskSocketInterface
+    {
+        return self::getTaskSocketPoolManger()->getSocket(uniqIdConvertToWorkerAddrAsHex($uniqId));
     }
 
     /**
@@ -1387,31 +1298,40 @@ class NetBus
         if ($num === 1) {
             return true;
         } elseif ($num > 1) {
+            //多个mainSocket，则表示网关是多点部署
             return false;
         }
         //mainSocket不存在，通过taskSocket数量进行判断
-        return Common::$container->get(TaskSocketPoolMangerInterface::class)->count() === 1;
+        return self::getTaskSocketPoolManger()->count() === 1;
+    }
+
+    /**
+     * @return TaskSocketPoolMangerInterface
+     * @throws ContainerExceptionInterface
+     * @throws NotFoundExceptionInterface
+     */
+    protected static function getTaskSocketPoolManger(): TaskSocketPoolMangerInterface
+    {
+        return Common::$container->get(TaskSocketPoolMangerInterface::class);
     }
 
     /**
      * 将uniqId进行分组，同一网关的归到一组
      * @param array $uniqIds 包含uniqId的数组
-     * @return array key是serverId，value是包含uniqId的数组
-     * @throws ContainerExceptionInterface
-     * @throws NotFoundExceptionInterface
+     * @return array key是网关的worker服务器监听地址的16进制表示，value是包含uniqId的数组
      */
-    protected static function uniqIdsGroupByServerId(array $uniqIds): array
+    protected static function getUniqIdsGroupByWorkerAddrAsHex(array $uniqIds): array
     {
-        $serverIdConvert = Common::$container->get(ServerIdConvertInterface::class);
-        $convert = $serverIdConvert->bulk($uniqIds);
-        $serverIdUniqIds = [];
-        foreach ($convert as $uniqId => $serverId) {
-            $serverIdUniqIds[$serverId][] = $uniqId;
+        $ret = [];
+        // 将uniqId按照worker服务器的监听地址进行分组
+        foreach ($uniqIds as $uniqId) {
+            $ret[uniqIdConvertToWorkerAddrAsHex($uniqId)][] = $uniqId;
         }
-        return $serverIdUniqIds;
+        return $ret;
     }
 
     /**
+     * 将repeatedField转换为数组
      * @param RepeatedField $repeatedField
      * @return array
      */

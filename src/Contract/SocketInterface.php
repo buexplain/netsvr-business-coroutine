@@ -25,14 +25,10 @@ namespace NetsvrBusiness\Contract;
 interface SocketInterface
 {
     /**
+     * 返回当前连接的netsvr网关的worker服务器监听的tcp地址
      * @return string
      */
-    public function getHost(): string;
-
-    /**
-     * @return int
-     */
-    public function getPort(): int;
+    public function getWorkerAddr(): string;
 
     /**
      * 判断连接是否正常

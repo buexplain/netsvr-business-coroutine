@@ -76,8 +76,8 @@ interface MainSocketInterface
     public function close(): void;
 
     /**
-     * 返回当前连接的网关的唯一编号
-     * @return int
+     * 返回当前连接的netsvr网关的worker服务器监听的tcp地址
+     * @return string
      */
-    public function getServerId(): int;
+    public function getWorkerAddr(): string;
 }

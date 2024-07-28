@@ -13,14 +13,15 @@
     "websocket",
     "coroutine",
     "swoole",
+    "swow",
     "hyperf",
     "netsvr"
   ],
   "require": {
     "php": ">=8.1",
-    "buexplain/netsvr-protocol-php": "^v2.0.1",
+    "buexplain/netsvr-protocol-php": "^3.0.0",
     "psr/container": "^2.0",
-    "psr/log": "^3.0"
+    "psr/log": "^2.0|^3.0"
   },
   "minimum-stability": "stable",
   "autoload": {
@@ -28,7 +29,7 @@
       "NetsvrBusiness\\": "src/"
     },
     "files": [
-      "src/Swo/Functions.php"
+      "src/Functions.php"
     ]
   },
   "autoload-dev": {
@@ -37,7 +38,7 @@
     }
   },
   "require-dev": {
-    "phrity/websocket": "^1.7",
+    "phrity/websocket": "^v3.0",
     "illuminate/container": "^10.0",
     "phpunit/phpunit": "^10.0",
     "swoole/ide-helper": "*",
@@ -49,7 +50,7 @@
     "hyperf/process": "~3.1",
     "hyperf/server": "~3.1",
     "hyperf/signal": "~3.1",
-    "swow/swow": "^1.4.0"
+    "swow/swow": "^v1.5.3"
   },
   "scripts": {
     "test": "phpunit --configuration phpunit.xml --log-events-verbose-text phpunit.log"

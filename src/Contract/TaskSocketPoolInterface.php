@@ -25,9 +25,10 @@ namespace NetsvrBusiness\Contract;
 interface TaskSocketPoolInterface
 {
     /**
-     * @return int 网关的唯一编号
+     * 返回当前连接的netsvr网关的worker服务器监听的tcp地址
+     * @return string
      */
-    public function getServerId(): int;
+    public function getWorkerAddr(): string;
 
     /**
      * 从连接池得到一个连接

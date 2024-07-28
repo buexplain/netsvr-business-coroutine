@@ -52,13 +52,14 @@ class MainSocketManagerFactory
             return $this->manger;
         }
         $logPrefix = sprintf('MainSocket#%d', Common::$workerProcessId);
-        $config = config('business', []);
+        $config = config('netsvr', []);
         $netsvr = Arr::pull($config, 'netsvr', []);
         if (empty($netsvr)) {
             return null;
         }
-        //将所以准备好的连接存储到连接管理器中
+        //将所有准备好的连接存储到连接管理器中
         $manger = new MainSocketManager();
+        $this->manger = $manger;
         foreach ($netsvr as $item) {
             //将网关的特定参数与公共参数进行合并，网关的特定参数覆盖公共参数
             $item = array_merge($config, $item);
@@ -75,9 +76,8 @@ class MainSocketManagerFactory
              * @var MainSocketInterface $mainSocket
              */
             $mainSocket = make(MainSocketInterface::class, $item);
-            $manger->set($mainSocket);
+            $manger->addSocket($mainSocket);
         }
-        $this->manger = $manger;
         return $manger;
     }
 }
