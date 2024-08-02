@@ -348,6 +348,9 @@ class MainSocket implements MainSocketInterface
                 }
                 break;
             }
+            if ($ret === '') {
+                return false;
+            }
             $resp = new UnRegisterResp();
             $resp->mergeFromString(substr($ret, 4));
             $this->connId = '';
@@ -384,7 +387,7 @@ class MainSocket implements MainSocketInterface
         $this->wait->wait();
         //关闭发送通道
         $this->sendCh->close();
-        ///关闭底层的socket对象
+        //关闭底层的socket对象
         $this->socket->close();
         //关闭锁
         $this->reconnectMux->close();

@@ -10,11 +10,11 @@ ps：如果你的项目是非协程的，串行执行php代码的，则可以使
 1. 下载并启动网关服务：[https://github.com/buexplain/netsvr/releases](https://github.com/buexplain/netsvr/releases)
    ，该服务会启动：websocket服务器、worker服务器
 2. 在hyperf项目里面安装本包以及protobuf包：
-   > composer require buexplain/netsvr-business-coroutine
-   >
-   > composer require google/protobuf
+    * composer require buexplain/netsvr-business-coroutine
+    * composer require google/protobuf
 3. 发布配置文件：`php bin/hyperf.php vendor:publish buexplain/netsvr-business-coroutine`
-4. 修改配置文件`config/autoload/netsvr.php`，把里面的`workerAddr`配置项，改为网关服务的worker服务器地址，另外在`app/Event.php`
+4. 修改配置文件`config/autoload/netsvr.php`，把里面的`workerAddr`
+   配置项，改为网关服务的worker服务器地址，另外在`app/Event.php`
    处理网关转发的事件，添加你的业务逻辑。
 5. 执行启动命令：`php bin/hyperf.php start`
 6. 搜索一个在线测试websocket的网页，连接到网关服务的websocket服务器，发送消息：`你好`，可以看到消息回显

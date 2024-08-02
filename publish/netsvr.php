@@ -29,15 +29,15 @@ return [
             //该参数表示接下来，需要网关服务的worker服务器开启多少协程来处理mainSocket连接的请求
             'processCmdGoroutineNum' => 25,
             //该参数表示接下来，需要网关服务的worker服务器转发如下事件给到business进程的mainSocket连接
-            'events'=> Event::OnOpen| Event::OnClose| Event::OnMessage,
+            'events' => Event::OnOpen | Event::OnClose | Event::OnMessage,
         ],
     ],
     //socket读写网关数据的超时时间，单位秒
     'sendReceiveTimeout' => 5,
     //连接到网关的超时时间，单位秒
     'connectTimeout' => 5,
-    //business进程向网关的worker服务器发送的心跳消息，这个字符串与网关的worker服务器的配置要一致
-    'workerHeartbeatMessage' => '~3yPvmnzu38NZv~',
+    //business进程向网关的worker服务器发送的心跳消息，这个字符串与网关的worker服务器的配置要一致，如果错误，网关的worker服务器是会强制关闭连接的
+    'workerHeartbeatMessage' => '~6YOt5rW35piO~',
     //维持心跳的间隔时间，单位毫秒
     'heartbeatIntervalMillisecond' => 25 * 1000,
     //与网关保持连接的socket的心跳间隔时间

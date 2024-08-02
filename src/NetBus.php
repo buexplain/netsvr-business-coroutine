@@ -1293,15 +1293,6 @@ class NetBus
      */
     protected static function isSinglePoint(): bool
     {
-        //通过mainSocket的数量进行判断
-        $num = count(Common::$container->get(MainSocketManagerInterface::class)->getSockets());
-        if ($num === 1) {
-            return true;
-        } elseif ($num > 1) {
-            //多个mainSocket，则表示网关是多点部署
-            return false;
-        }
-        //mainSocket不存在，通过taskSocket数量进行判断
         return self::getTaskSocketPoolManger()->count() === 1;
     }
 
