@@ -8,3 +8,4 @@ vendor
 coverage
 phpunit.log
 tests/Auxiliary/*.log
+/tests/Auxiliary/log/netSvr.log
