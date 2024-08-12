@@ -930,7 +930,7 @@ class NetBus
      * @param bool $reqUniqId 是否请求uniqId
      * @param bool $reqSession 是否请求session
      * @param bool $reqTopic 是否请求topic
-     * @return array[] key是customerId，value是customerId对应的多个连接信息
+     * @return array[] key是customerId，value是customerId对应的多个连接信息，连接可能是同一个网关的，也可能是多个网关的
      * @throws ContainerExceptionInterface
      * @throws NotFoundExceptionInterface
      * @throws Exception
@@ -961,18 +961,16 @@ class NetBus
                     /**
                      * @var $info ConnInfoByCustomerIdRespItems
                      */
-                    $items = [];
                     foreach ($info->getItems() as $item) {
                         /**
                          * @var $item ConnInfoByCustomerIdRespItem
                          */
-                        $items[] = [
+                        $ret[$customerId][] = [
                             'uniqId' => $item->getUniqId(),
                             'session' => $item->getSession(),
                             'topics' => self::repeatedFieldToArray($item->getTopics()),
                         ];
                     }
-                    $ret[$customerId] = $items;
                 }
             }
             return $ret;
