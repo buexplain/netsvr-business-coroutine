@@ -19,14 +19,14 @@ declare(strict_types=1);
 
 namespace NetsvrBusiness\Socket;
 
-use Netsvr\Cmd;
-use Netsvr\ConnClose;
-use Netsvr\ConnOpen;
-use Netsvr\RegisterReq;
-use Netsvr\RegisterResp;
-use Netsvr\Transfer;
-use Netsvr\UnRegisterReq;
-use Netsvr\UnRegisterResp;
+use NetsvrProtocol\Cmd;
+use NetsvrProtocol\ConnClose;
+use NetsvrProtocol\ConnOpen;
+use NetsvrProtocol\RegisterReq;
+use NetsvrProtocol\RegisterResp;
+use NetsvrProtocol\Transfer;
+use NetsvrProtocol\UnRegisterReq;
+use NetsvrProtocol\UnRegisterResp;
 use NetsvrBusiness\Contract\ChannelInterface;
 use NetsvrBusiness\Contract\EventInterface;
 use NetsvrBusiness\Contract\MainSocketInterface;

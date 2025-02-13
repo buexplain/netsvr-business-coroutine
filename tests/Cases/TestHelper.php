@@ -23,7 +23,7 @@ use Hyperf\Contract\ConfigInterface;
 use Hyperf\Contract\StdoutLoggerInterface;
 use Hyperf\Framework\Logger\StdoutLogger;
 use Illuminate\Container\Container;
-use Netsvr\Event;
+use NetsvrProtocol\Event;
 use NetsvrBusiness\Common;
 use NetsvrBusiness\ConfigProvider;
 use Psr\Container\ContainerExceptionInterface;
@@ -32,6 +32,9 @@ use Psr\Container\NotFoundExceptionInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
 
+/**
+ * php -d extension=swow .\vendor\bin\phpunit  --configuration phpunit.xml --log-events-verbose-text phpunit.log
+ */
 class TestHelper
 {
     public const WORKER_HEARTBEAT_MESSAGE = '~6YOt5rW35piO~';

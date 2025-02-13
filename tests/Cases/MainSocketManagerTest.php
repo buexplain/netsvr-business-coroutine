@@ -20,9 +20,9 @@ declare(strict_types=1);
 namespace NetsvrBusinessTest\Cases;
 
 use Illuminate\Container\Container;
-use Netsvr\ConnClose;
-use Netsvr\ConnOpen;
-use Netsvr\Transfer;
+use NetsvrProtocol\ConnClose;
+use NetsvrProtocol\ConnOpen;
+use NetsvrProtocol\Transfer;
 use NetsvrBusiness\Common;
 use NetsvrBusiness\Contract\EventInterface;
 use NetsvrBusiness\Contract\MainSocketInterface;

@@ -17,7 +17,7 @@
 
 declare(strict_types=1);
 
-use Netsvr\Event;
+use NetsvrProtocol\Event;
 use function Hyperf\Support\env;
 
 return [

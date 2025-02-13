@@ -20,9 +20,9 @@ declare(strict_types=1);
 namespace App;
 
 use Hyperf\Contract\StdoutLoggerInterface;
-use Netsvr\ConnClose;
-use Netsvr\ConnOpen;
-use Netsvr\Transfer;
+use NetsvrProtocol\ConnClose;
+use NetsvrProtocol\ConnOpen;
+use NetsvrProtocol\Transfer;
 use NetsvrBusiness\Contract\EventInterface;
 use NetsvrBusiness\NetBus;
 use Psr\Container\ContainerExceptionInterface;
