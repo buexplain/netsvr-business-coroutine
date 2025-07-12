@@ -135,7 +135,7 @@ class MainSocketManagerTest extends TestCase
             //循环每个网关，并与之构建websocket连接
             foreach (TestHelper::$netsvrConfigForNetsvrSingle['netsvr'] as $config) {
                 $client = new Client($config["ws"]);
-                $client->setTimeout(5);
+                $client->receive();
                 $client->text($testMessage);
                 $client->close();
                 $client->disconnect();
